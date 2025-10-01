@@ -1,0 +1,142 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# PyTorch & ML Models
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+models/checkpoints/
+models/*.pt
+models/*.pth
+*.onnx
+
+# Type checking & linting
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+.pyre/
+.pyright/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+arangodb_data/
+*.arangodump
+
+# ArangoDB sockets and runtime
+*.sock
+/var/run/arangodb/
+
+# Compiled binaries (Go proxies)
+bin/
+core/database/arango/proxies/bin/
+*.exe
+*.dll
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific
+acheron/  # Archived legacy code
+.hades.ignore
+*.parquet
+*.arrow
+
+# Lock files (track these for reproducibility)
+# poetry.lock
+# requirements.lock
+# go.sum
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+site/
+
+# Node modules (if any JS tooling)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+credentials.json
+secrets.yaml
