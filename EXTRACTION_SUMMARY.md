@@ -277,3 +277,57 @@ Configured CodeRabbit AI for automated PR reviews:
 - **README.md**: Updated performance metrics with proxy overhead
 - **EXTRACTION_SUMMARY.md**: Added configuration files to tracking
 - **EXTRACTION_SUMMARY.md**: Updated success criteria with configuration tasks
+
+## GraphSAGE/GNN Module (ADDED)
+
+### Overview
+Graph Neural Network infrastructure for learning node embeddings on heterogeneous graphs. This is general-purpose infrastructure suitable for any graph learning task, not just HADES-specific use cases.
+
+### Files Extracted (5 files, ~1,194 lines)
+| Source (HADES) | Destination (Metis) | Status | Notes |
+|----------------|---------------------|--------|-------|
+| `core/gnn/__init__.py` | `metis/gnn/__init__.py` | ✅ Complete | Module exports, cleaned docs |
+| `core/gnn/graphsage_model.py` | `metis/gnn/graphsage_model.py` | ✅ Complete | Multi-relational GraphSAGE |
+| `core/gnn/graph_builder.py` | `metis/gnn/graph_builder.py` | ✅ Complete | PyG graph construction |
+| `core/gnn/trainer.py` | `metis/gnn/trainer.py` | ✅ Complete | Training with contrastive loss |
+| `core/gnn/inference.py` | `metis/gnn/inference.py` | ✅ Complete | Fast inference for retrieval |
+
+### Architecture
+- **Input**: Jina v4 embeddings (2048-dim)
+- **Hidden**: 1024-dim representation
+- **Output**: 512-dim embeddings for efficient similarity search
+- **Multi-relational**: Different aggregators per edge type (imports, contains, references, relates_to, derives_from)
+- **Inductive**: Generates embeddings for new nodes without retraining
+
+### Features
+- Multi-relational message passing
+- Contrastive learning for query-node similarity
+- Fast inference (<50ms per batch)
+- PyTorch Geometric integration
+- Dynamic graph support (no retraining needed for new nodes)
+
+### Usage
+```python
+from metis.gnn import MultiRelationalGraphSAGE, GraphSAGEInference
+
+# Create model
+model = MultiRelationalGraphSAGE(
+    in_channels=2048,
+    hidden_channels=1024,
+    out_channels=512
+)
+
+# Inference
+inference = GraphSAGEInference(model, device='cuda')
+candidates = inference.retrieve_candidates(query_embedding, k=50)
+```
+
+### Dependencies
+- PyTorch >= 2.0.0
+- PyTorch Geometric >= 2.6.0 (optional extra: `pip install metis[gnn]`)
+
+### Use Cases
+- Code graph analysis
+- Knowledge graph embeddings  
+- Document similarity search
+- Any heterogeneous graph with multiple edge types

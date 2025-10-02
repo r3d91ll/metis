@@ -1,18 +1,28 @@
 """
-Module: core/database/arango/memory_client.py
-Summary: High-level ArangoDB client on HTTP/2 transport (gRPC-like surface).
-Owners: @todd, @hades-runtime
-Last-Updated: 2025-09-30
-Inputs: ARANGO_* env (RO/RW sockets, auth, timeouts), base_url
-Outputs: Document CRUD, bulk import, AQL queries; creates collections/indexes
-Data-Contracts: collections {repo_docs, doc_chunks}, indexes (persistent, vector)
-Related: core/database/arango/optimized_client.py, core/database/arango/README.md
-Stability: stable; Security: RO for reads, RW for writes; admin endpoints blocked at proxy
-Boundary: C_ext=local UDS; P_ij=DB-scoped endpoints and JSON payload limits respected
+ArangoDB High-Level Client
+===========================
 
-Implements Phase 3 of Issue #51 by integrating the optimized HTTP/2 client
-with application workflows. Provides an interface compatible with the previous
-gRPC client so existing code requires minimal changes.
+High-level ArangoDB client with Unix socket support and HTTP/2 transport.
+
+Features:
+- Dual-socket support: separate read-only and read-write connections
+- HTTP/2 multiplexing for efficient database operations
+- gRPC-compatible error handling for backward compatibility
+- Bulk operations: efficient batch insert/update with NDJSON
+- Collection and index management
+- AQL query execution with cursor support
+
+Security:
+- Read-only socket blocks AQL DML mutations
+- Read-write socket blocks admin endpoints
+- Policy enforcement at proxy layer (see metis/database/proxies/)
+
+Environment Variables:
+- ARANGO_RO_SOCKET: Read-only socket path (default: /run/metis/readonly/arangod.sock)
+- ARANGO_RW_SOCKET: Read-write socket path (default: /run/metis/readwrite/arangod.sock)
+- ARANGO_USERNAME: Database username (default: root)
+- ARANGO_PASSWORD: Database password (required unless ARANGO_SKIP_AUTH=1)
+- ARANGO_HTTP_BASE_URL: Base URL for HTTP requests (default: http://localhost)
 """
 
 from __future__ import annotations
@@ -44,8 +54,8 @@ HTTP_TO_GRPC_STATUS: dict[int, StatusCode] = {
 }
 
 
-class MemoryServiceError(grpc.RpcError):
-    """gRPC-compatible error raised by the memory client."""
+class ArangoClientError(grpc.RpcError):
+    """gRPC-compatible error raised by the ArangoDB client."""
 
     def __init__(self, message: str, *, status: StatusCode = StatusCode.UNKNOWN, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
@@ -68,8 +78,8 @@ class MemoryServiceError(grpc.RpcError):
 
 
 @dataclass(slots=True)
-class ArangoMemoryClientConfig:
-    """Configuration values resolved for the memory client."""
+class ArangoClientConfig:
+    """Configuration values resolved for the ArangoDB client."""
 
     database: str
     username: str
@@ -129,9 +139,9 @@ def _parse_timeout(value: str | None, default: float) -> float:
         return default
 
 
-def resolve_memory_config(
+def resolve_client_config(
     *,
-    database: str = "hades_memories",
+    database: str = "metis_db",
     username: str | None = None,
     password: str | None = None,
     socket_path: str | None = None,
@@ -176,8 +186,8 @@ def resolve_memory_config(
     proxies_requested = True if use_proxies is None else use_proxies
 
     if proxies_requested:
-        default_ro = "/run/hades/readonly/arangod.sock"
-        default_rw = "/run/hades/readwrite/arangod.sock"
+        default_ro = "/run/metis/readonly/arangod.sock"
+        default_rw = "/run/metis/readwrite/arangod.sock"
 
         read_socket = read_socket or env_ro or default_ro
         write_socket = write_socket or env_rw or default_rw
@@ -197,7 +207,7 @@ def resolve_memory_config(
     read_timeout = read_timeout if read_timeout is not None else _parse_timeout(env.get("ARANGO_READ_TIMEOUT"), 30.0)
     write_timeout = write_timeout if write_timeout is not None else _parse_timeout(env.get("ARANGO_WRITE_TIMEOUT"), 30.0)
 
-    return ArangoMemoryClientConfig(
+    return ArangoClientConfig(
         database=database,
         username=username if not skip_auth else "",
         password=password if not skip_auth else "",
@@ -210,10 +220,10 @@ def resolve_memory_config(
     )
 
 
-class ArangoMemoryClient:
-    """High-level client matching the previous MemoryService gRPC surface."""
+class ArangoClient:
+    """High-level ArangoDB client with Unix socket support and gRPC-compatible error handling."""
 
-    def __init__(self, config: ArangoMemoryClientConfig) -> None:
+    def __init__(self, config: ArangoClientConfig) -> None:
         self._config = config
         self._read_client = ArangoHttp2Client(config.build_read_config())
         if config.read_socket == config.write_socket:
@@ -233,7 +243,7 @@ class ArangoMemoryClient:
             self._write_client.close()
         self._closed = True
 
-    def __enter__(self) -> "ArangoMemoryClient":  # pragma: no cover - helper
+    def __enter__(self) -> "ArangoClient":  # pragma: no cover - helper
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - helper
@@ -421,16 +431,16 @@ class ArangoMemoryClient:
                 continue
 
     # Internal helpers --------------------------------------------------
-    def _wrap_error(self, error: ArangoHttpError) -> MemoryServiceError:
+    def _wrap_error(self, error: ArangoHttpError) -> ArangoClientError:
         status = _http_status_to_grpc(error.status_code)
         message = error.details.get("errorMessage") or error.details.get("message") or str(error)
-        return MemoryServiceError(message, status=status, details=error.details)
+        return ArangoClientError(message, status=status, details=error.details)
 
 
 __all__ = [
-    "ArangoMemoryClient",
-    "ArangoMemoryClientConfig",
+    "ArangoClient",
+    "ArangoClientConfig",
     "CollectionDefinition",
-    "MemoryServiceError",
-    "resolve_memory_config",
+    "ArangoClientError",
+    "resolve_client_config",
 ]

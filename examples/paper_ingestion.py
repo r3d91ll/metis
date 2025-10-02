@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from metis import create_embedder
-from metis.database import ArangoMemoryClient, CollectionDefinition, resolve_memory_config
+from metis.database import ArangoClient, CollectionDefinition, resolve_client_config
 from metis.extractors import DoclingExtractor, LaTeXExtractor
 from metis.utils import sanitize_key, sha1_hex
 
@@ -22,7 +22,7 @@ def main():
 
     # Configure database connection
     print("\n1. Configuring database connection...")
-    config = resolve_memory_config(
+    config = resolve_client_config(
         database="papers_db",
         use_proxies=False,  # Direct connection for this example
     )
@@ -48,7 +48,7 @@ def main():
 
     # Connect to database
     print("\n4. Connecting to database...")
-    with ArangoMemoryClient(config) as client:
+    with ArangoClient(config) as client:
         # Create collections
         print("   Creating collections...")
         collections = [
