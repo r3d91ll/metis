@@ -1,0 +1,45 @@
+# arXiv Import Pipeline Configuration
+
+database:
+  name: "arxiv_datastore"
+  socket_path: "/run/metis/readwrite/arangod.sock"  # Adjust if needed
+
+  # Collections
+  collections:
+    papers: "arxiv_papers"
+    citations: "citations"
+    category_links: "category_links"
+    author_links: "author_links"
+    temporal_succession: "temporal_succession"
+
+data:
+  source_file: "/home/todd/olympus/Acheron/HADES-Lab/data/arxiv-kaggle-latest.json"
+
+embeddings:
+  # Using all-MiniLM for testing (384-dim, faster)
+  # Switch to jinaai/jina-embeddings-v4 for production (2048-dim, 32k context)
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+  device: "cuda:0"
+  dimension: 384  # MiniLM dimension
+  batch_size: 64  # Can be larger for smaller model
+  max_length: 256  # MiniLM max length
+
+import:
+  batch_size: 100  # Papers per batch
+  log_interval: 1000  # Log progress every N papers
+
+edges:
+  citation:
+    enabled: true
+    confidence_threshold: 0.9
+
+  category:
+    enabled: true
+    min_jaccard: 0.5
+
+  author:
+    enabled: true
+
+  temporal:
+    enabled: true
+    max_time_delta_hours: 720  # 30 days
