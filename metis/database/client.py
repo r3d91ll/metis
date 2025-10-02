@@ -44,7 +44,7 @@ class ArangoHttp2Config:
     """Configuration for the HTTP/2 client."""
 
     database: str = "_system"
-    socket_path: str = "/tmp/arangodb.sock"
+    socket_path: str | None = "/tmp/arangodb.sock"  # None = use TCP
     base_url: str = "http://localhost"
     username: str | None = None
     password: str | None = None
@@ -59,10 +59,20 @@ class ArangoHttp2Client:
 
     def __init__(self, config: ArangoHttp2Config) -> None:
         self._config = config
-        transport = httpx.HTTPTransport(
-            uds=config.socket_path,
-            retries=0,
-        )
+
+        # Support both Unix socket and TCP
+        if config.socket_path:
+            # Unix socket (preferred for performance)
+            transport = httpx.HTTPTransport(
+                uds=config.socket_path,
+                retries=0,
+            )
+        else:
+            # TCP fallback (when socket unavailable)
+            transport = httpx.HTTPTransport(
+                retries=0,
+            )
+
         timeout = httpx.Timeout(
             connect=config.connect_timeout,
             read=config.read_timeout,

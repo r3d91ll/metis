@@ -2,8 +2,9 @@
 
 database:
   name: "arxiv_datastore"
-  socket_path: "/run/arangodb3/arangodb.sock"
-  use_tcp: true  # Set to false once socket permissions are fixed
+  socket_path: null  # Set to "/run/arangodb3/arangodb.sock" once permissions fixed
+  use_tcp: true  # Using TCP until socket permissions resolved
+  tcp_host: "localhost"
   tcp_port: 8529  # Adjust if needed
 
   # Collections

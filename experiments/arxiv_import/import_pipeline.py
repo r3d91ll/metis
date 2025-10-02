@@ -27,7 +27,7 @@ import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from metis import create_embedder
-from metis.database import ArangoClient, resolve_client_config, CollectionDefinition
+from metis.database import ArangoClient, ArangoClientConfig, resolve_client_config, CollectionDefinition
 from arxiv_parser import ArxivIdParser
 
 logging.basicConfig(
@@ -69,18 +69,28 @@ class ArxivImportPipeline:
 
         if use_tcp:
             # Use TCP for all operations (fallback when socket has permission issues)
-            logger.info("Using TCP endpoint (socket permissions issue)")
-            self.db_config = resolve_client_config(
+            tcp_host = self.config['database'].get('tcp_host', 'localhost')
+            tcp_port = self.config['database'].get('tcp_port', 8529)
+            logger.info(f"Using TCP endpoint: http://{tcp_host}:{tcp_port}")
+            # Force TCP by setting both read and write sockets to None
+            self.db_config = ArangoClientConfig(
                 database=self.config['database']['name'],
-                socket_path=None,  # Use TCP
-                use_proxies=False
+                username="",
+                password="",
+                base_url=f"http://{tcp_host}:{tcp_port}",
+                read_socket=None,  # TCP mode
+                write_socket=None,  # TCP mode
+                connect_timeout=5.0,
+                read_timeout=30.0,
+                write_timeout=30.0
             )
         else:
             # Use socket for data operations (preferred for performance)
-            logger.info("Using Unix socket for data operations")
+            socket_path = self.config['database']['socket_path']
+            logger.info(f"Using Unix socket: {socket_path}")
             self.db_config = resolve_client_config(
                 database=self.config['database']['name'],
-                socket_path=self.config['database']['socket_path'],
+                socket_path=socket_path,
                 use_proxies=False
             )
 
