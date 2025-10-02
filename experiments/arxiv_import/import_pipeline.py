@@ -27,7 +27,7 @@ import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from metis import create_embedder
-from metis.database import ArangoClient, resolve_client_config
+from metis.database import ArangoClient, resolve_client_config, CollectionDefinition
 from arxiv_parser import ArxivIdParser
 
 logging.basicConfig(
@@ -65,10 +65,24 @@ class ArxivImportPipeline:
         )
 
         # Database configuration
-        self.db_config = resolve_client_config(
-            database=self.config['database']['name'],
-            socket_path=self.config['database']['socket_path']
-        )
+        use_tcp = self.config['database'].get('use_tcp', False)
+
+        if use_tcp:
+            # Use TCP for all operations (fallback when socket has permission issues)
+            logger.info("Using TCP endpoint (socket permissions issue)")
+            self.db_config = resolve_client_config(
+                database=self.config['database']['name'],
+                socket_path=None,  # Use TCP
+                use_proxies=False
+            )
+        else:
+            # Use socket for data operations (preferred for performance)
+            logger.info("Using Unix socket for data operations")
+            self.db_config = resolve_client_config(
+                database=self.config['database']['name'],
+                socket_path=self.config['database']['socket_path'],
+                use_proxies=False
+            )
 
         self.data_file = Path(self.config['data']['source_file'])
         self.batch_size = self.config['import']['batch_size']
@@ -76,6 +90,8 @@ class ArxivImportPipeline:
 
         logger.info(f"Data source: {self.data_file}")
         logger.info(f"Target database: {self.config['database']['name']}")
+        logger.info(f"Socket path: {self.config['database']['socket_path']}")
+        logger.info(f"TCP endpoint: http://localhost:8529 (for admin operations)")
 
     def read_papers(self, skip: int = 0, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
         """
@@ -248,20 +264,65 @@ class ArxivImportPipeline:
 
         return stats
 
+    def create_database_if_needed(self) -> None:
+        """Create database via TCP if it doesn't exist (admin operation)."""
+        import httpx
+
+        db_name = self.config['database']['name']
+        logger.info(f"Checking if database '{db_name}' exists...")
+
+        # Use TCP endpoint for admin operations
+        tcp_url = "http://localhost:8529"
+
+        try:
+            # Check if database exists
+            with httpx.Client() as client:
+                response = client.get(
+                    f"{tcp_url}/_api/database/user",
+                    auth=("root", "")  # Try with empty password
+                )
+
+                if response.status_code == 200:
+                    databases = response.json().get('result', [])
+                    if db_name in databases:
+                        logger.info(f"Database '{db_name}' already exists")
+                        return
+
+                    # Create database
+                    logger.info(f"Creating database '{db_name}' via TCP...")
+                    create_response = client.post(
+                        f"{tcp_url}/_api/database",
+                        json={"name": db_name},
+                        auth=("root", "")
+                    )
+
+                    if create_response.status_code in [200, 201]:
+                        logger.info(f"Successfully created database '{db_name}'")
+                    elif create_response.status_code == 409:
+                        logger.info(f"Database '{db_name}' already exists")
+                    else:
+                        logger.warning(
+                            f"Database creation returned status {create_response.status_code}: "
+                            f"{create_response.text}"
+                        )
+                else:
+                    logger.warning(
+                        f"Could not check databases (status {response.status_code}). "
+                        f"Database '{db_name}' may need to be created manually via web UI."
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Could not create database via TCP: {e}. "
+                f"Please create database '{db_name}' manually via web UI at http://localhost:8529"
+            )
+
     def setup_database(self, client: ArangoClient) -> None:
-        """Create collections and indexes."""
+        """Create collections and indexes (uses socket client)."""
         logger.info("Setting up database schema...")
 
         papers_collection = self.config['database']['collections']['papers']
 
-        # Create main collection
-        client.create_collection(papers_collection)
-        logger.info(f"Created collection: {papers_collection}")
-
-        # Create indexes
-        logger.info("Creating indexes...")
-
-        # Persistent indexes for queries
+        # Define collection with indexes
         indexes = [
             {
                 'type': 'persistent',
@@ -296,12 +357,19 @@ class ArxivImportPipeline:
             },
         ]
 
-        for idx_spec in indexes:
-            try:
-                client.create_index(papers_collection, idx_spec)
-                logger.info(f"Created index: {idx_spec['name']}")
-            except Exception as e:
-                logger.warning(f"Index creation failed (may already exist): {e}")
+        # Create collection with indexes using CollectionDefinition
+        collection_def = CollectionDefinition(
+            name=papers_collection,
+            type="document",
+            indexes=indexes
+        )
+
+        try:
+            client.create_collections([collection_def])
+            logger.info(f"Created collection: {papers_collection} with {len(indexes)} indexes")
+        except Exception as e:
+            # Collection may already exist
+            logger.info(f"Collection setup: {e}")
 
         logger.info("Database setup complete")
 
@@ -329,8 +397,12 @@ class ArxivImportPipeline:
             'batches': 0
         }
 
+        # Create database via TCP if needed (admin operation)
+        if setup_db:
+            self.create_database_if_needed()
+
         with ArangoClient(self.db_config) as client:
-            # Setup database schema
+            # Setup collections and indexes via socket (data operations)
             if setup_db:
                 self.setup_database(client)
 

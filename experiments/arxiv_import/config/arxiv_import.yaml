@@ -2,7 +2,9 @@
 
 database:
   name: "arxiv_datastore"
-  socket_path: "/run/metis/readwrite/arangod.sock"  # Adjust if needed
+  socket_path: "/run/arangodb3/arangodb.sock"
+  use_tcp: true  # Set to false once socket permissions are fixed
+  tcp_port: 8529  # Adjust if needed
 
   # Collections
   collections:
@@ -16,13 +18,11 @@ data:
   source_file: "/home/todd/olympus/Acheron/HADES-Lab/data/arxiv-kaggle-latest.json"
 
 embeddings:
-  # Using all-MiniLM for testing (384-dim, faster)
-  # Switch to jinaai/jina-embeddings-v4 for production (2048-dim, 32k context)
-  model: "sentence-transformers/all-MiniLM-L6-v2"
+  model: "jinaai/jina-embeddings-v4"
   device: "cuda:0"
-  dimension: 384  # MiniLM dimension
-  batch_size: 64  # Can be larger for smaller model
-  max_length: 256  # MiniLM max length
+  dimension: 2048
+  batch_size: 32
+  max_length: 32768  # Jina v4 supports 32k tokens
 
 import:
   batch_size: 100  # Papers per batch
