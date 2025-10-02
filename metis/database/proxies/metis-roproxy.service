@@ -1,0 +1,23 @@
+[Unit]
+Description=Metis ArangoDB Read-Only Proxy (UDS)
+After=arangodb3.service
+Requires=arangodb3.service
+
+[Service]
+Type=simple
+User=metis
+Group=arangodb
+Environment=LISTEN_SOCKET=/run/metis/readonly/arangod.sock
+Environment=UPSTREAM_SOCKET=/run/arangodb3/arangodb.sock
+RuntimeDirectory=metis/readonly
+RuntimeDirectoryMode=0750
+ExecStart=/usr/local/bin/metis-roproxy
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

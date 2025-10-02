@@ -93,12 +93,13 @@ Extract structured content from various document formats:
 
 ### Database
 
-High-performance ArangoDB integration:
+High-performance ArangoDB integration with security-hardened Unix socket access:
 
-- **Unix Socket Support**: Low-latency local connections
-- **HTTP/2 Protocol**: Efficient multiplexed requests
-- **Bulk Operations**: Optimized batch insertion and querying
-- **Transaction Support**: ACID guarantees for complex operations
+- **Unix Socket Proxies**: Read-only and read-write security layers (Go-based)
+- **HTTP/2 Protocol**: Efficient multiplexed requests with persistent connections
+- **Bulk Operations**: Optimized batch insertion and querying with NDJSON
+- **Security Enforcement**: Policy-based access control at the socket level
+- **Admin Operations**: Idempotent database, index, and view management
 
 ## Architecture
 
@@ -106,10 +107,15 @@ Metis follows a modular architecture with clear separation of concerns:
 
 ```
 metis/
-├── embedders/     # Text embedding models
-├── extractors/    # Document extraction
-├── database/      # ArangoDB client
+├── embedders/     # Text embedding models (Jina v4, Sentence Transformers)
+├── extractors/    # Document extraction (PDF, LaTeX, Code)
+├── database/      # ArangoDB client with Unix socket proxies
+│   ├── client.py  # HTTP/2 client
+│   ├── memory.py  # High-level wrapper
+│   ├── admin.py   # Admin operations
+│   └── proxies/   # Go security proxies (RO/RW)
 ├── config/        # Configuration management
+├── chunking/      # Late chunking support
 └── utils/         # Shared utilities
 ```
 
@@ -144,8 +150,34 @@ embedder = create_embedder(config=config)
 Metis is designed for high-throughput production workloads:
 
 - **Embedding Speed**: 40+ papers/sec on 2x A6000 GPUs
-- **Database Latency**: <1ms for document lookups via Unix sockets
-- **Batch Processing**: Efficient pipeline for processing large corpora
+- **Database Latency**: <0.4ms p50 upstream via Unix sockets, ~0.2ms proxy overhead
+- **Batch Processing**: Efficient NDJSON pipeline for processing large corpora
+- **Security Overhead**: Minimal (~0.2ms) with HTTP/2 connection pooling
+
+## Unix Socket Proxies
+
+Metis includes Go-based security proxies for ArangoDB Unix socket access. These proxies provide fine-grained access control at the socket level:
+
+### Read-Only Proxy
+- Allows GET, HEAD, OPTIONS requests
+- Permits AQL queries (POST to `/_api/cursor`) but blocks mutation keywords
+- Socket permissions: 0660 (group access)
+
+### Read-Write Proxy
+- Allows all read-only operations
+- Permits DB-scoped mutations (document CRUD, index management)
+- Blocks admin endpoints (database, view, analyzer creation)
+- Socket permissions: 0660 (dev), 0600 (production)
+
+### Building Proxies
+
+```bash
+cd metis/database/proxies
+make build          # Build both proxies
+sudo make install   # Install to /usr/local/bin
+```
+
+For detailed proxy documentation, see [metis/database/proxies/README.md](metis/database/proxies/README.md).
 
 ## Development
 

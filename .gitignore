@@ -96,7 +96,9 @@ arangodb_data/
 
 # Compiled binaries (Go proxies)
 bin/
-core/database/arango/proxies/bin/
+metis/database/proxies/bin/
+roproxy
+rwproxy
 *.exe
 *.dll
 
@@ -118,6 +120,11 @@ acheron/  # Archived legacy code
 .hades.ignore
 *.parquet
 *.arrow
+
+# Unix socket paths (runtime)
+/run/hades/
+/run/arangodb/
+/run/arangodb3/
 
 # Lock files (track these for reproducibility)
 # poetry.lock

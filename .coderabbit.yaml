@@ -30,62 +30,39 @@ reviews:
 
   # Path-specific review focus
   path_instructions:
-    # Core runtime memory system
-    - path: "core/runtime/memory/**/*.py"
-      instructions: |
-        - Focus on PathRAG retrieval correctness, SLO compliance (p99 ≤ 250ms), and graph traversal logic
-        - Validate caps enforcement: H≤2, F≤3, B≤8
-        - Check timeout handling and reason code emission
-        - Review Pydantic model definitions for type safety
-        - Ensure proper error handling for ArangoDB operations
-        - Validate experiential memory operations (observations, reflections, entities)
-
     # ArangoDB client and proxies
-    - path: "core/database/arango/**/*.{py,go}"
+    - path: "metis/database/**/*.{py,go}"
       instructions: |
-        - Verify socket permission handling (RO: 0660, RW: 0600)
+        - Verify socket permission handling (RO: 0660, RW: 0660 dev/0600 prod)
         - Check HTTP/2 connection pooling and keep-alive
-        - Validate SLO compliance (p50≤0.4ms upstream, p50≤0.8ms proxy)
+        - Validate SLO compliance (p50≤0.4ms upstream, p50≤0.8ms proxy overhead)
         - Review AQL query efficiency and injection prevention
         - Ensure proper resource cleanup (connections, cursors)
         - Check Go proxy error handling and logging
-
-    # GNN/GraphSAGE components
-    - path: "core/gnn/**/*.py"
-      instructions: |
-        - Review multi-relational aggregator implementation
-        - Check inductive learning capability for new nodes
-        - Validate dimension matching (2048→1024→512)
-        - Verify contrastive loss implementation
-        - Ensure inference latency <150ms p95
-        - Check PyTorch Geometric graph construction
+        - Validate Unix socket path configuration and error handling
+        - Review proxy policy enforcement (RO: keyword blocking, RW: endpoint filtering)
+        - Check admin operation permissions and idempotency
 
     # Embedders (Jina v4, sentence transformers)
-    - path: "core/embedders/**/*.py"
+    - path: "metis/embedders/**/*.py"
       instructions: |
         - Validate batch size handling and memory efficiency
         - Check CUDA/CPU device management
         - Ensure proper error handling for model loading
         - Review late chunking implementation
         - Verify embedding dimension consistency (2048 for Jina v4)
+        - Check factory pattern correctness and model registry
+        - Validate configuration loading and defaults
 
     # Extractors (TreeSitter, Docling, code parsing)
-    - path: "core/extractors/**/*.py"
+    - path: "metis/extractors/**/*.py"
       instructions: |
         - Check TreeSitter grammar loading and error handling
         - Validate code structure extraction accuracy
         - Review PDF/LaTeX extraction robustness
         - Ensure proper file encoding handling
-        - Check exclusion pattern support (.hades.ignore)
-
-    # Scripts (operational CLIs)
-    - path: "scripts/**/*.py"
-      instructions: |
-        - Validate CLI argument parsing and help text
-        - Check error messages are user-friendly
-        - Review progress reporting and logging
-        - Ensure idempotency where expected (ingestion)
-        - Validate database connection configuration
+        - Check factory pattern and file type detection
+        - Validate extractor error handling and fallback mechanisms
 
     # Tests
     - path: "tests/**/*.py"
@@ -97,12 +74,27 @@ reviews:
         - Ensure benchmarks validate SLOs
 
     # Configuration and schemas
-    - path: "core/config/**/*.py"
+    - path: "metis/config/**/*.py"
       instructions: |
         - Validate environment variable handling
         - Check default values are sensible
         - Ensure schema versioning is clear
         - Review configuration validation logic
+        - Validate YAML loading and error handling
+
+    # Utilities
+    - path: "metis/utils/**/*.py"
+      instructions: |
+        - Check hashing consistency and collision resistance
+        - Validate utility function edge cases
+        - Ensure proper error handling
+
+    # Examples
+    - path: "examples/**/*.py"
+      instructions: |
+        - Ensure examples are up-to-date with API changes
+        - Validate error handling in example code
+        - Check documentation clarity and completeness
 
   # Tool integration
   tools:
@@ -133,18 +125,23 @@ exclude:
   - "**/models/*.pth"
   - "**/.git/**"
   - "**/bin/**"  # Compiled binaries
-  - "core/database/arango/proxies/bin/**"
+  - "metis/database/proxies/bin/**"  # Go proxy binaries
+  - "**/go.sum"  # Go dependency checksums
+  - "**/*.sock"  # Unix socket files
 
 # Known issues/patterns to watch for
 knowledge_base:
   learnings:
-    - "ArangoDB operations must enforce strict SLOs (p50≤0.4ms upstream, p50≤0.8ms proxy)"
-    - "PathRAG must enforce caps: H≤2, F≤3, B≤8 and timeout at 2s global"
-    - "GraphSAGE embeddings: 2048→1024→512 dimensions, inductive learning required"
-    - "Memory retrieval p99 ≤ 250ms, vector search p99 ≤ 750ms"
-    - "Qwen3 model: 262k context window, AWQ quantization, FlashAttention-2"
-    - "Jina v4: 32k context, 2048 dimensions, late chunking support"
-    - "Socket permissions critical: RO 0660 group hades, RW 0600 owner"
-    - "Conveyance metrics: boundary W·R·H tracking only, no internal ops"
-    - "Experiential memory types: observations, reflections, entities, relationships"
-    - "Ingestion pipeline: normalize → embed → late-chunk → write (idempotent)"
+    - "ArangoDB operations must enforce strict SLOs (p50≤0.4ms upstream, ~0.2ms proxy overhead)"
+    - "Unix socket proxies: RO (0660) allows queries only, RW (0660 dev/0600 prod) allows DB-scoped mutations"
+    - "Proxy security: RO blocks AQL DML keywords (INSERT, UPDATE, REPLACE, REMOVE, UPSERT) using word-boundary regex, RW blocks admin endpoints"
+    - "RO proxy: DELETE allowed for cursor cleanup, PUT to cursor deprecated (use POST)"
+    - "HTTP/2 client: Use persistent connections, handle timeouts properly, cleanup cursors"
+    - "Jina v4: 32k context, 2048 dimensions, late chunking support, batch processing required"
+    - "Socket permissions critical: RO 0660 group access, RW 0660 dev/0600 prod owner-only"
+    - "Admin operations: Must use admin socket or RW socket, idempotent design required"
+    - "Extractor factory: Detect file type by extension, use robust fallback on errors"
+    - "Embedder configuration: Validate device (cuda/cpu), batch size, chunk parameters"
+    - "Go proxy timeouts: Default 120s client, 10s dial, configurable via env vars"
+    - "Import operations: Use on_duplicate='ignore' for idempotent ingestion"
+    - "TreeSitter parsing: Handle grammar loading errors, validate language support"
