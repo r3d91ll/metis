@@ -99,7 +99,10 @@ Entropy measures how much a document bridges between different communities. We u
 #### Core Entropy Function
 
 ```python
-def calculate_bridge_entropy(doc_id: str, 
+import networkx as nx
+from networkx.algorithms import community
+
+def calculate_bridge_entropy(doc_id: str,
                             graph_db: ArangoDBClient,
                             embeddings: Dict[str, np.ndarray]) -> float:
     """
@@ -259,16 +262,13 @@ def calculate_community_bridging_entropy(
 def detect_communities_louvain(subgraph: Dict) -> List[List[str]]:
     """
     Detect communities in neighbor subgraph using Louvain algorithm.
-    
+
     Args:
         subgraph: Dict with 'nodes' and 'edges' keys
-        
+
     Returns:
         List of communities (each community is list of node IDs)
     """
-    import networkx as nx
-    from networkx.algorithms import community
-    
     # Build NetworkX graph
     G = nx.Graph()
     G.add_nodes_from(subgraph['nodes'])
@@ -391,7 +391,7 @@ def get_publication_date(doc_id: str, graph_db: ArangoDBClient):
     date_str = result[0]
     try:
         return datetime.fromisoformat(date_str)
-    except:
+    except (ValueError, TypeError):
         return None
 ```
 
@@ -470,39 +470,48 @@ def batch_calculate_entropy_scores(
         print(f"Loaded {len(entropy_scores)} existing scores")
     else:
         entropy_scores = {}
-    
+
+    # Track last saved count for better checkpoint logic
+    last_saved = len(entropy_scores)
+
     # Process in batches
     for i in range(0, total_docs, batch_size):
         batch = all_doc_ids[i:i+batch_size]
-        
+
         for doc_id in batch:
             # Skip if already calculated
             if doc_id in entropy_scores:
                 continue
-            
+
             try:
                 entropy_scores[doc_id] = calculate_bridge_entropy(
-                    doc_id, 
-                    graph_db, 
+                    doc_id,
+                    graph_db,
                     embeddings
                 )
             except Exception as e:
+                import traceback
                 print(f"Error processing {doc_id}: {e}")
+                traceback.print_exc()
                 entropy_scores[doc_id] = 0.0
-        
+
         # Progress update
         completed = len(entropy_scores)
         print(f"Progress: {completed}/{total_docs} ({100*completed/total_docs:.1f}%)")
-        
-        # Save checkpoint periodically
-        if completed % save_interval == 0:
+
+        # Save checkpoint when enough new documents processed or at end
+        if completed - last_saved >= save_interval or completed == total_docs:
             with open(checkpoint_path, 'wb') as f:
                 pickle.dump(entropy_scores, f)
             print(f"Checkpoint saved at {completed} documents")
-    
-    # Final save
-    with open(checkpoint_path, 'wb') as f:
-        pickle.dump(entropy_scores, f)
+            last_saved = completed
+
+    # Final save if not already saved
+    if len(entropy_scores) > last_saved:
+        with open(checkpoint_path, 'wb') as f:
+            pickle.dump(entropy_scores, f)
+        print(f"Final checkpoint saved at {len(entropy_scores)} documents")
+
     print("Entropy calculation complete!")
     
     return entropy_scores
@@ -532,56 +541,115 @@ For 2.8M documents, use GPU-accelerated UMAP for reasonable compute time.
 def generate_2d_coordinates(
     embeddings: Dict[str, np.ndarray],
     n_neighbors: int = 15,
-    min_dist: float = 0.1
+    min_dist: float = 0.1,
+    force_cpu: bool = False
 ) -> Dict[str, np.ndarray]:
     """
-    Reduce 1024-dim embeddings to 2D using GPU-accelerated UMAP.
-    
+    Reduce 1024-dim embeddings to 2D using GPU-accelerated UMAP with CPU fallback.
+
     Args:
         embeddings: Dict mapping doc_id -> embedding vector
         n_neighbors: UMAP parameter (15 is good default)
         min_dist: UMAP parameter (0.1 balances local/global structure)
-        
+        force_cpu: If True, skip GPU and use CPU implementation
+
     Returns:
         Dict mapping doc_id -> [x, y] coordinates
     """
-    from cuml import UMAP as cuUMAP
-    import cupy as cp
-    
     # Convert to ordered arrays
     doc_ids = list(embeddings.keys())
     embedding_matrix = np.array([embeddings[doc_id] for doc_id in doc_ids])
-    
+
     print(f"Running UMAP on {len(doc_ids)} documents...")
     print(f"Input shape: {embedding_matrix.shape}")
-    
-    # Move to GPU
-    gpu_embeddings = cp.asarray(embedding_matrix)
-    
-    # Configure UMAP
-    reducer = cuUMAP(
-        n_neighbors=n_neighbors,
-        min_dist=min_dist,
-        n_components=2,
-        metric='cosine',
-        n_epochs=200,  # Balance quality vs speed
-        random_state=42,
-        verbose=True
-    )
-    
-    # Fit and transform (this is the heavy computation)
-    # Expected time: 2-4 hours on RTX A6000
-    xy_coords_gpu = reducer.fit_transform(gpu_embeddings)
-    
-    # Move back to CPU
-    xy_coords = cp.asnumpy(xy_coords_gpu)
-    
+
+    # Try GPU path with comprehensive error handling
+    if not force_cpu:
+        try:
+            import cupy as cp
+            from cuml import UMAP as cuUMAP
+
+            # Check CUDA availability
+            if cp.cuda.runtime.getDeviceCount() == 0:
+                raise RuntimeError("No CUDA devices available")
+
+            # Estimate memory requirements (rough: 4 bytes per float32 element)
+            estimated_memory_gb = (embedding_matrix.size * 4) / (1024**3)
+            device_id = cp.cuda.Device()
+            total_memory_gb = device_id.mem_info[1] / (1024**3)
+            free_memory_gb = device_id.mem_info[0] / (1024**3)
+
+            print(f"Estimated memory needed: {estimated_memory_gb:.2f} GB")
+            print(f"GPU memory: {free_memory_gb:.2f} GB free / {total_memory_gb:.2f} GB total")
+
+            if estimated_memory_gb > free_memory_gb * 0.8:
+                print("Warning: Estimated memory exceeds 80% of available GPU memory")
+                print("Consider using force_cpu=True or reducing dataset size")
+
+            # Move to GPU
+            gpu_embeddings = cp.asarray(embedding_matrix)
+
+            # Configure UMAP
+            reducer = cuUMAP(
+                n_neighbors=n_neighbors,
+                min_dist=min_dist,
+                n_components=2,
+                metric='cosine',
+                n_epochs=200,  # Balance quality vs speed
+                random_state=42,
+                verbose=True
+            )
+
+            # Fit and transform (this is the heavy computation)
+            # Expected time: 2-4 hours on RTX A6000
+            xy_coords_gpu = reducer.fit_transform(gpu_embeddings)
+
+            # Move back to CPU
+            xy_coords = cp.asnumpy(xy_coords_gpu)
+
+            # Free GPU memory
+            del gpu_embeddings, xy_coords_gpu
+            cp.get_default_memory_pool().free_all_blocks()
+
+            print("UMAP reduction complete (GPU)!")
+
+        except (ImportError, RuntimeError, MemoryError, Exception) as e:
+            import traceback
+            print(f"GPU processing failed: {e}")
+            print("Falling back to CPU implementation...")
+            traceback.print_exc()
+            force_cpu = True
+
+    # CPU fallback path
+    if force_cpu:
+        try:
+            from umap import UMAP
+            print("Using CPU-based UMAP (this will be slower)")
+
+            reducer = UMAP(
+                n_neighbors=n_neighbors,
+                min_dist=min_dist,
+                n_components=2,
+                metric='cosine',
+                n_epochs=200,
+                random_state=42,
+                verbose=True
+            )
+
+            xy_coords = reducer.fit_transform(embedding_matrix)
+            print("UMAP reduction complete (CPU)!")
+
+        except ImportError:
+            raise ImportError(
+                "Neither cuML nor umap-learn is available. "
+                "Install with: pip install cuml-cu11 or pip install umap-learn"
+            )
+
     # Create mapping
     coordinates = {}
     for i, doc_id in enumerate(doc_ids):
         coordinates[doc_id] = xy_coords[i]
-    
-    print("UMAP reduction complete!")
+
     return coordinates
 ```
 
@@ -592,21 +660,28 @@ If memory is limited, use incremental UMAP or subsample then project.
 ```python
 def generate_2d_coordinates_incremental(
     embeddings: Dict[str, np.ndarray],
-    sample_size: int = 500000
+    sample_size: int = 500000,
+    random_seed: int = 42
 ) -> Dict[str, np.ndarray]:
     """
     Memory-efficient UMAP using sampling then projection.
-    
+
     1. Fit UMAP on representative sample
     2. Project remaining documents into learned space
+
+    Args:
+        embeddings: Dict mapping doc_id -> embedding vector
+        sample_size: Number of documents to sample for fitting UMAP
+        random_seed: Random seed for reproducible sampling
     """
     from cuml import UMAP as cuUMAP
     import cupy as cp
-    
+
     doc_ids = list(embeddings.keys())
-    
-    # Sample for fitting
-    sample_ids = np.random.choice(doc_ids, size=sample_size, replace=False)
+
+    # Sample for fitting with deterministic seed
+    rng = np.random.default_rng(random_seed)
+    sample_ids = rng.choice(doc_ids, size=sample_size, replace=False)
     sample_embeddings = np.array([embeddings[doc_id] for doc_id in sample_ids])
     
     # Fit UMAP on sample
@@ -644,6 +719,60 @@ def generate_2d_coordinates_incremental(
 ### Combining All Dimensions
 
 ```python
+def get_all_document_metadata(
+    doc_ids: List[str],
+    graph_db: ArangoDBClient,
+    batch_size: int = 10000
+) -> Dict[str, Dict]:
+    """
+    Retrieve metadata for many documents in batches to avoid excessive DB queries.
+
+    Args:
+        doc_ids: List of document IDs to fetch metadata for
+        graph_db: ArangoDB client instance
+        batch_size: Number of documents to process in each batch (default 10k)
+
+    Returns:
+        Dict mapping doc_id -> metadata dict
+    """
+    metadata_map = {}
+
+    # Process in batches to avoid query size limits
+    for i in range(0, len(doc_ids), batch_size):
+        batch_ids = doc_ids[i:i+batch_size]
+
+        aql_query = """
+        FOR doc IN papers
+            FILTER doc._key IN @doc_ids
+
+            LET citation_count = LENGTH(
+                FOR v IN 1..1 INBOUND doc cites
+                RETURN 1
+            )
+
+            RETURN {
+                'doc_id': doc._key,
+                'title': doc.title,
+                'authors': doc.authors,
+                'published_date': doc.published_date,
+                'arxiv_id': doc.arxiv_id,
+                'category': doc.category,
+                'citation_count': citation_count
+            }
+        """
+
+        results = graph_db.execute(aql_query, {"doc_ids": batch_ids})
+
+        # Build metadata map
+        for metadata in results:
+            doc_id = metadata.pop('doc_id')
+            metadata_map[doc_id] = metadata
+
+        print(f"Fetched metadata for {len(metadata_map)}/{len(doc_ids)} documents")
+
+    return metadata_map
+
+
 def generate_3d_landscape(
     embeddings: Dict[str, np.ndarray],
     entropy_scores: Dict[str, float],
@@ -651,20 +780,24 @@ def generate_3d_landscape(
 ) -> Dict[str, Dict]:
     """
     Generate complete 3D coordinates for visualization.
-    
+
     Returns dict with X,Y,Z coords plus metadata for each document.
     """
-    
+
     # Generate 2D semantic coordinates
     xy_coords = generate_2d_coordinates(embeddings)
-    
+
+    # Batch fetch all metadata (avoids 2.8M individual DB queries)
+    print("Fetching document metadata in batches...")
+    all_metadata = get_all_document_metadata(list(xy_coords.keys()), graph_db)
+
     # Combine into 3D landscape
     landscape = {}
-    
+
     for doc_id in xy_coords.keys():
-        # Get document metadata
-        metadata = get_document_metadata(doc_id, graph_db)
-        
+        # Get document metadata from batch-fetched map
+        metadata = all_metadata.get(doc_id, {})
+
         landscape[doc_id] = {
             'x': float(xy_coords[doc_id][0]),
             'y': float(xy_coords[doc_id][1]),
@@ -676,7 +809,7 @@ def generate_3d_landscape(
             'citation_count': metadata.get('citation_count', 0),
             'category': metadata.get('category', 'Unknown')
         }
-    
+
     return landscape
 
 
@@ -817,8 +950,11 @@ def create_lod_visualization(
     )
     
     # Level 3: Full dataset saved for regional loading
-    # Save coordinates to file for custom WebGL viewer
-    save_coordinates_binary(landscape, f"{output_dir}/landscape_full.bin")
+    # Save coordinates to pickle file for later use
+    import pickle
+    with open(f"{output_dir}/landscape_full.pkl", 'wb') as f:
+        pickle.dump(landscape, f)
+    print(f"Full landscape saved to {output_dir}/landscape_full.pkl")
 ```
 
 ---
@@ -868,30 +1004,39 @@ def create_lod_visualization(
 **Parallel Entropy Calculation**:
 
 ```python
-from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 def parallel_entropy_calculation(
     doc_ids: List[str],
     graph_db: ArangoDBClient,
     embeddings: Dict,
-    n_processes: int = 48
+    n_threads: int = 48
 ) -> Dict[str, float]:
     """
-    Calculate entropy scores in parallel.
+    Calculate entropy scores in parallel using threads (suitable for I/O-bound DB queries).
+
+    Args:
+        doc_ids: List of document IDs to process
+        graph_db: ArangoDB client instance (shared across threads)
+        embeddings: Dict mapping doc_id -> embedding vector
+        n_threads: Number of worker threads (default 48)
+
+    Returns:
+        Dict mapping doc_id -> entropy score
     """
-    
+
     # Create partial function with fixed arguments
     calc_func = partial(
         calculate_bridge_entropy,
         graph_db=graph_db,
         embeddings=embeddings
     )
-    
-    # Process in parallel
-    with Pool(processes=n_processes) as pool:
-        entropy_list = pool.map(calc_func, doc_ids)
-    
+
+    # Process in parallel using thread pool (DB queries are I/O-bound)
+    with ThreadPoolExecutor(max_workers=n_threads) as executor:
+        entropy_list = list(executor.map(calc_func, doc_ids))
+
     # Combine results
     return dict(zip(doc_ids, entropy_list))
 ```

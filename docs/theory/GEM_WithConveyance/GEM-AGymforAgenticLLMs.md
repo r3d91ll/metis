@@ -347,28 +347,8 @@ Report issue for preceding element
 
 Table 2: QA benchmark scores for the base agent and agents trained with different RL configurations. † and \* denote single-hop and multi-hop datasets, respectively.
 
-|     |     |     |     |     |     |
+| Dataset | Qwen3-4B Base (no tool) | Base + RL (no tool, single env) | Base + RL (no tool, mixed env) | Base + RL (with tool, single env) | Base + RL (with tool, mixed env) |
 | --- | --- | --- | --- | --- | --- |
-| Qwen3-4B | |     |
-| --- |
-| Base |
-| (no tool) | | |     |
-| --- |
-| Base + RL |
-| (no tool, |
-| single env) | | |     |
-| --- |
-| Base + RL |
-| (no tool, |
-| mixed env) | | |     |
-| --- |
-| Base + RL |
-| (with tool, |
-| single env) | | |     |
-| --- |
-| Base + RL |
-| (with tool, |
-| mixed env) | |
 | NQ† | 6.1 | 15.4 | 15.8 | 35.0 | 37.3 |
 | TriviaQA† | 35.4 | 43.4 | 44.9 | 69.0 | 71.9 |
 | PopQA† | 11.3 | 19.0 | 19.9 | 47.1 | 48.1 |
@@ -857,17 +837,21 @@ Report issue for preceding element
 
 [⬇](data:text/plain;base64,ZnJvbSBnZW0uY29yZSBpbXBvcnQgRW52CmZyb20gZ2VtLmVudnMucmVnaXN0cmF0aW9uIGltcG9ydCByZWdpc3Rlcgpmcm9tIGdlbS51dGlscy5jb25zdGFudHMgaW1wb3J0IFRFUk1JTkFMX1NUQVRFCmZyb20gZ2VtLnV0aWxzLnBhcnNpbmcgaW1wb3J0IGV4dHJhY3RfbGFzdF9ib3hlZF9hbnN3ZXIKCmNsYXNzIFJldmVyc2VTdHJpbmdFbnYoRW52KToKICAgIGRlZiBfX2luaXRfXyhzZWxmLCBzdHJfbGVuOiBpbnQgPSA1KToKICAgICAgICBzdXBlcigpLl9faW5pdF9fKCkKICAgICAgICBzZWxmLnN0cl9sZW4gPSBzdHJfbGVuCgogICAgZGVmIF9nZXRfaW5zdHJ1Y3Rpb25zKHNlbGYpOgogICAgICAgIHJldHVybiAoCiAgICAgICAgICAgICJZb3UgYXJlIHRhc2tlZCB0byByZXZlcnNlIGEgZ2l2ZW4gc3RyaW5nLlxuIgogICAgICAgICAgICAiWW91IG1heSBwcm92aWRlIHlvdXIgcmVzcG9uc2UgaW4gYW55IG1hbm5lci4gT25seSB0aGUgY29udGVudCB3cmFwcGVkIGluc2lkZSBcXGJveGVke30gd2lsbCBiZSBjb25zaWRlcmVkIGFzIHlvdXIgZmluYWwgYW5zd2VyLlxuIgogICAgICAgICAgICBmIlBsZWFzZSByZXZlcnNlIHRoZSBzdHJpbmc6IHtzZWxmLmd0X3N0cn0uXG4iCiAgICAgICAgKQoKICAgIGRlZiByZXNldChzZWxmLCBzZWVkPU5vbmUpOgogICAgICAgIHN1cGVyKCkucmVzZXQoc2VlZCkKICAgICAgICBjaGFyYWN0ZXJzID0gc3RyaW5nLmFzY2lpX2xldHRlcnMgKyBzdHJpbmcuZGlnaXRzICAjIEEtWiwgYS16LCAwLTkKICAgICAgICBzZWxmLmd0X3N0ciA9ICIiLmpvaW4ocmFuZG9tLmNob2ljZXMoY2hhcmFjdGVycywgaz1zZWxmLnN0cl9sZW4pKQogICAgICAgIHJldHVybiBzZWxmLl9nZXRfaW5zdHJ1Y3Rpb25zKCksIHt9CgogICAgZGVmIHN0ZXAoc2VsZiwgYWN0aW9uKToKICAgICAgICBjbGVhbl9hY3Rpb24gPSBleHRyYWN0X2xhc3RfYm94ZWRfYW5zd2VyKGFjdGlvbikKICAgICAgICBpZiBjbGVhbl9hY3Rpb24gaXMgTm9uZToKICAgICAgICAgICAgcmV3YXJkID0gMAogICAgICAgIGVsc2U6CiAgICAgICAgICAgIHJld2FyZCA9IGZsb2F0KGNsZWFuX2FjdGlvbls6Oi0xXSA9PSBzZWxmLmd0X3N0cikKICAgICAgICByZXR1cm4gVEVSTUlOQUxfU1RBVEUsIHJld2FyZCwgVHJ1ZSwgVHJ1ZSwge30KCgojIFJlZ2lzdGVyIHlvdXIgZW52aXJvbm1lbnQKcmVnaXN0ZXIoImN1c3RvbTpSZXZlcnNlU3RyaW5nIiwgUmV2ZXJzZVN0cmluZ0VudikKCmVudiA9IGdlbS5tYWtlKCJjdXN0b206UmV2ZXJzZVN0cmluZyIp)
 
-1fromgem.coreimportEnv
+1import string
 
-2fromgem.envs.registrationimportregister
+2import random
 
-3fromgem.utils.constantsimportTERMINAL\_STATE
+3fromgem.coreimportEnv
 
-4fromgem.utils.parsingimportextract\_last\_boxed\_answer
+4fromgem.envs.registrationimportregister
 
-5
+5fromgem.utils.constantsimportTERMINAL\_STATE
 
-6classReverseStringEnv(Env):
+6fromgem.utils.parsingimportextract\_last\_boxed\_answer
+
+7
+
+8classReverseStringEnv(Env):
 
 7def\_\_init\_\_(self,str\_len:int=5):
 
@@ -1136,27 +1120,26 @@ Report issue for preceding element
 
 Table 3: Hyperparameter configurations used in all experiments.
 
-|     |     |
-| --- | --- |
 | Parameter | Value |
-| Actor |
-| Maximum response length per turn | 40964096 tokens |
+| --- | --- |
+| **Actor** | |
+| Maximum response length per turn | 4096 tokens |
 | Sampling temperature, train | 1.0 |
 | Sampling temperature, evaluation | 0.0 |
 | (top P, top k) | (1.0, -1) |
-| Learner |
+| **Learner** | |
 | Optimizer | AdamW |
-| Adam parameters (β1,β2\\beta\_{1},\\beta\_{2}) | (0.9, 0.95) |
+| Adam parameters (β₁, β₂) | (0.9, 0.95) |
 | Weight decay | 0.0 |
 | Gradient norm clipping | 1.0 |
 | Learning rate scheduler | Constant |
-| Learning rate | 1×10−61\\times 10^{-6} |
+| Learning rate | 1×10⁻⁶ |
 | Inner proximal update epoch | 2 |
 | KL loss coefficient | 0.0 |
 | KL penalty coefficient | 0.0 |
 | Policy clipping parameter | 0.2 |
 | Discount factor | 0.9 (game,qa); 1.0 (otherwise) |
-| GAE λ\\lambda | 0.95 |
+| GAE λ | 0.95 |
 | Steps | 500 |
 
 Report issue for preceding element

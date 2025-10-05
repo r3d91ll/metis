@@ -25,6 +25,7 @@ import sys
 import os
 import multiprocessing as mp
 import threading
+import signal
 from pathlib import Path
 from typing import Iterator, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -237,7 +238,7 @@ def storage_worker(
                     stats_dict['total_created'] += metadata_count
 
                     # Log counts for verification
-                    process_logger.debug(
+                    logger.debug(
                         f"Imported batch: {metadata_count} metadata, {abstract_count} abstracts, "
                         f"{embedding_count} embeddings"
                     )
@@ -565,41 +566,79 @@ class MultiGPUArxivImporter:
         """Clean shutdown of workers and storage."""
         print("Shutting down workers...")
 
-        # Wait for workers
-        for p in self.workers:
-            p.join(timeout=60)
+        # Wait for embedding workers to finish
+        print("Waiting for GPU workers to complete...")
+        for i, p in enumerate(self.workers):
+            p.join(timeout=120)
+            if p.is_alive():
+                print(f"Warning: Worker {i} did not exit cleanly, terminating...")
+                p.terminate()
+                p.join(timeout=10)
 
-        # Stop storage
+        # Signal storage thread to stop after draining output queue
+        print("Waiting for storage thread to drain output queue...")
         self.stop_event.set()
-        if self.storage_thread:
-            self.storage_thread.join(timeout=30)
 
+        # Give storage thread time to drain remaining batches
+        if self.storage_thread:
+            self.storage_thread.join(timeout=120)
+            if self.storage_thread.is_alive():
+                print("Warning: Storage thread did not exit cleanly")
+
+        # Report final queue states
+        print(f"Final queue states: input={self.input_queue.qsize()}, output={self.output_queue.qsize()}")
         print("All workers stopped")
 
     def run(self, limit: Optional[int] = None, skip: int = 0, setup_db: bool = True):
         """Run the multi-GPU import pipeline."""
         start_time = time.time()
 
-        if setup_db:
-            self.create_database_if_needed()
-            self.setup_database()
+        # Register signal handlers for graceful shutdown
+        def signal_handler(signum, frame):
+            print(f"\nReceived signal {signum}, initiating graceful shutdown...")
+            self.stop_event.set()
+            # Send poison pills to workers
+            for _ in range(self.num_workers):
+                try:
+                    self.input_queue.put(None, timeout=1.0)
+                except:
+                    pass
 
-        self.start_workers()
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
-        self.read_and_process_papers(limit=limit, skip=skip)
+        try:
+            if setup_db:
+                self.create_database_if_needed()
+                self.setup_database()
 
-        self.shutdown_workers()
+            self.start_workers()
 
-        duration = time.time() - start_time
-        total_created = self.stats_dict['total_created']
-        throughput = total_created / duration if duration > 0 else 0
+            self.read_and_process_papers(limit=limit, skip=skip)
 
-        return {
-            'total_created': total_created,
-            'total_errors': self.stats_dict['total_errors'],
-            'duration': duration,
-            'throughput': throughput
-        }
+            self.shutdown_workers()
+
+            duration = time.time() - start_time
+            total_created = self.stats_dict['total_created']
+            throughput = total_created / duration if duration > 0 else 0
+
+            return {
+                'total_created': total_created,
+                'total_errors': self.stats_dict['total_errors'],
+                'duration': duration,
+                'throughput': throughput
+            }
+
+        except KeyboardInterrupt:
+            print("\nInterrupted by user, shutting down...")
+            self.stop_event.set()
+            self.shutdown_workers()
+            raise
+        except Exception as e:
+            print(f"\nError during import: {e}")
+            self.stop_event.set()
+            self.shutdown_workers()
+            raise
 
 
 def main():

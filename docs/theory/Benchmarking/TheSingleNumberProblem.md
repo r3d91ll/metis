@@ -69,6 +69,14 @@ class CapabilityNormalizer:
             config['cpu_cores'] / self.baseline['cpu_cores'],
             config['ram_gb'] / self.baseline['ram_gb']
         ]
+
+        # Validate that all ratios are positive before taking log
+        if not all(r > 0 for r in ratios):
+            raise ValueError(
+                "Invalid hardware ratios: all hardware specs must be positive. "
+                f"Got ratios: {ratios}"
+            )
+
         return np.exp(np.mean(np.log(ratios)))  # Geometric mean
     
     def _compute_model_ratio(self, config):
@@ -111,9 +119,15 @@ def validate_h_factor():
         # Measure actual performance
         actual_tokens_per_sec = benchmark_config(config)
         actual_h = actual_tokens_per_sec / BASELINE_PERFORMANCE['tokens_per_second']
-        
-        # Validate calculation
-        error = abs(calculated_h - actual_h) / actual_h
+
+        # Validate calculation with zero-division guard
+        if actual_h == 0:
+            if calculated_h == 0:
+                error = 0.0  # Both zero: perfect match
+            else:
+                error = abs(calculated_h)  # Only calculated is non-zero
+        else:
+            error = abs(calculated_h - actual_h) / actual_h
         print(f"{config['name']}: calculated={calculated_h:.2f}, actual={actual_h:.2f}, error={error:.1%}")
         
         # If error > 20%, need to adjust calculation method
@@ -127,14 +141,26 @@ class ConveyanceCalculator:
     def calculate_conveyance(self, query, response, context, timing_data):
         # Get single H factor (capability relative to baseline)
         h_factor = self.capability_normalizer.compute_h_factor(self.current_config)
-        
+
         # Other factors (already single numbers)
         w_factor = self.score_response_quality(response)           # 0-1 scale
         r_factor = self.score_retrieval_effectiveness(query, context)  # 0-1 scale
-        t_seconds = timing_data['total_latency']                   # Actual seconds
+
+        # Validate timing data exists and is positive
+        if 'total_latency' not in timing_data:
+            raise ValueError("timing_data must contain 'total_latency' key")
+
+        total_latency = timing_data['total_latency']
+        if total_latency <= 0:
+            raise ValueError(
+                f"total_latency must be positive, got {total_latency}. "
+                "Check that timing measurement is correct."
+            )
+
+        t_seconds = total_latency / 1000  # Convert ms to seconds if needed (adjust as appropriate)
         c_ext_tokens = len(context.split())                       # Token count
         p_ij = 1.0                                                # Perfect compatibility
-        
+
         # Apply conveyance equation with single numbers
         c_out = (w_factor * r_factor * h_factor) / t_seconds
         c_in = c_out  # Symmetric

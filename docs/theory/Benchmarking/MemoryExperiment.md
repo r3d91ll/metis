@@ -3,6 +3,7 @@
 ## **The Experiment**
 
 ### **Setup**
+
 ```python
 class ConveyancePathOptimization:
     def __init__(self, memory_graph):
@@ -23,6 +24,7 @@ class ConveyancePathOptimization:
 ```
 
 ### **Path Discovery & Analysis**
+
 ```python
 def find_all_possible_paths(self, start_node, end_node, max_depth=6):
     """Find ALL possible paths, not just shortest or most similar"""
@@ -57,6 +59,7 @@ def predict_path_conveyance(self, path):
 ```
 
 ### **Optimal Path Discovery**
+
 ```python
 def identify_optimal_paths(self, trace_set):
     """Find patterns in highest-conveyance paths"""
@@ -77,11 +80,17 @@ def identify_optimal_paths(self, trace_set):
                                 key=lambda p: p['predicted_conveyance'], 
                                 reverse=True)
             
+            # Guard against division by zero
+            if actual_conveyance > 0:
+                improvement_potential = ranked_paths[0]['predicted_conveyance'] / actual_conveyance
+            else:
+                improvement_potential = float('inf') if ranked_paths[0]['predicted_conveyance'] > 0 else 0.0
+
             optimization_results[f"{start}->{end_node}"] = {
                 'actual_path_conveyance': actual_conveyance,
                 'optimal_predicted_path': ranked_paths[0],
                 'all_paths_ranked': ranked_paths,
-                'improvement_potential': ranked_paths[0]['predicted_conveyance'] / actual_conveyance
+                'improvement_potential': improvement_potential
             }
     
     return optimization_results
@@ -90,6 +99,7 @@ def identify_optimal_paths(self, trace_set):
 ## **Key Insights This Would Reveal**
 
 ### **1. Path Characteristics of High-Conveyance Routes**
+
 ```python
 def analyze_optimal_path_patterns(self, optimization_results):
     """What makes a high-conveyance path?"""
@@ -111,6 +121,7 @@ def analyze_optimal_path_patterns(self, optimization_results):
 ```
 
 ### **2. Memory Graph Structure Optimization**
+
 ```python
 def suggest_graph_improvements(self, path_analysis):
     """Based on optimal paths, how should we restructure the graph?"""
@@ -126,6 +137,7 @@ def suggest_graph_improvements(self, path_analysis):
 ```
 
 ### **3. Real-Time Routing Optimization**
+
 ```python
 class ConveyanceAwareRouter:
     def __init__(self, learned_path_patterns):
@@ -163,6 +175,7 @@ class ConveyanceAwareRouter:
 **Your approach**: Optimize for **highest conveyance**
 
 This means paths that might be:
+
 - Longer but semantically richer (better W)
 - Less direct but better connected (better R)  
 - More context-heavy but higher total value (better C_ext)
@@ -175,15 +188,18 @@ This could revolutionize memory retrieval from "find similar content" to "find c
 
 ## **The Core Conflict**
 
-### **PathRAG's Approach** (from the paper):
+### **PathRAG's Approach** (from the paper)
+
 PathRAG uses flow-based pruning with distance awareness to identify key relational paths, assigning reliability scores based on resource flow through edges
 
 **PathRAG optimizes for**:
+
 - Flow-based reliability scores
 - Distance (shorter paths via decay penalty γ)
 - Resource allocation efficiency
 
 **Your experiment optimizes for**:
+
 - **Conveyance** (W × R × H / T × C_ext^α)
 - Semantic richness (better W)
 - Effective positioning (better R)
@@ -202,6 +218,7 @@ path_score_conveyance = (W * R * H) / T * (C_ext ** alpha)
 ```
 
 PathRAG's flow-based pruning includes early stopping when resource flow becomes negligible, which means:
+
 - **PathRAG might prune conveyance-optimal paths** if they don't score well on flow metrics
 - You'd never discover those paths in your experiment
 - Your conveyance patterns would be biased by PathRAG's pre-filtering
@@ -209,6 +226,7 @@ PathRAG's flow-based pruning includes early stopping when resource flow becomes 
 ## **Recommendation: Measure First, Optimize Later**
 
 ### **Phase 1: Pure Conveyance Baseline (Do This First)**
+
 ```python
 class PureConveyancePathExperiment:
     """Baseline experiment with NO PathRAG interference"""
@@ -259,7 +277,11 @@ class PureConveyancePathExperiment:
             for end in ends:
                 # Get ALL paths (no pruning)
                 all_paths = self.find_all_paths_unpruned(start, end)
-                
+
+                # Check if any paths exist
+                if not all_paths:
+                    continue  # Skip if no paths found
+
                 # Score by conveyance
                 scored_paths = [
                     {
@@ -270,7 +292,7 @@ class PureConveyancePathExperiment:
                     }
                     for path in all_paths
                 ]
-                
+
                 # Find conveyance-optimal
                 optimal = max(scored_paths, key=lambda p: p['conveyance'])
                 
@@ -279,20 +301,24 @@ class PureConveyancePathExperiment:
                 )
                 
                 # Analyze: do short paths have high conveyance?
+                min_length = min(p['length'] for p in scored_paths)
+                shortest_path_conveyance = next(
+                    (p['conveyance'] for p in scored_paths if p['length'] == min_length),
+                    0.0  # Default if no path found (should not happen but safe)
+                )
+
                 patterns['conveyance_vs_distance_tradeoffs'].append({
                     'optimal_length': optimal['length'],
-                    'shortest_path_length': min(p['length'] for p in scored_paths),
+                    'shortest_path_length': min_length,
                     'optimal_conveyance': optimal['conveyance'],
-                    'shortest_path_conveyance': next(
-                        p['conveyance'] for p in scored_paths 
-                        if p['length'] == min(p['length'] for p in scored_paths)
-                    )
+                    'shortest_path_conveyance': shortest_path_conveyance
                 })
         
         return patterns
 ```
 
 ### **Phase 2: Compare PathRAG vs Conveyance**
+
 ```python
 class PathRAGConveyanceComparison:
     """After baseline established, compare PathRAG's choices"""
@@ -333,6 +359,7 @@ class PathRAGConveyanceComparison:
 ```
 
 ### **Phase 3: Hybrid Optimization (If Needed)**
+
 ```python
 class ConveyanceAwarePathRAG:
     """Modified PathRAG that considers conveyance in pruning"""
@@ -355,18 +382,20 @@ class ConveyanceAwarePathRAG:
 ## **Why GraphSAGE First is Correct**
 
 **GraphSAGE provides**:
+
 - Node embeddings for semantic similarity
 - Basic graph structure understanding
 - Foundation for path finding
 
 **It does NOT**:
+
 - Prune paths based on any optimization objective
 - Make assumptions about which paths are "better"
 - Interfere with conveyance measurement
 
-```python
+```text
 # Clean measurement architecture:
-GraphSAGE Embeddings 
+GraphSAGE Embeddings
     ↓
 Basic Path Finding (all paths)
     ↓
@@ -387,7 +416,8 @@ Learn Optimal Path Patterns
 4. **Flexibility**: Can always add PathRAG later as a comparison or enhancement
 
 **Implementation Order**:
-```
+
+```text
 Week 1-2: GraphSAGE + Basic memory graph
 Week 3-4: Conveyance path experiment (NO PathRAG)
 Week 5-6: Analyze conveyance-optimal path patterns
@@ -402,7 +432,8 @@ Week 9+: Hybrid approach if needed
 ## **Infrastructure = Different Optimization**
 
 ### **PathRAG's Constraints (Network-Based)**
-```
+
+```text
 Network Latency: 50-200ms per hop
 Database: Distributed, remote
 Optimization: Minimize hops (shortest path)
@@ -410,7 +441,8 @@ Objective: Reduce total latency
 ```
 
 ### **HADES Constraints (In-Memory)**
-```
+
+```text
 Memory Latency: <1ms per hop  
 Database: 128GB in local RAM
 Optimization: Maximize conveyance per path
@@ -422,6 +454,7 @@ Objective: Maximize understanding
 ## **Conveyance-First Pathfinding**
 
 ### **Real-Time Conveyance Navigation**
+
 ```python
 class ConveyancePathfinder:
     def __init__(self, memory_graph, conveyance_tracker):
@@ -473,6 +506,7 @@ class ConveyancePathfinder:
 ```
 
 ### **Your Hypothesis: High Conveyance = Short Path**
+
 ```python
 def validate_conveyance_distance_hypothesis(self, query_set):
     """Test: Do high conveyance paths tend to be shorter?"""
@@ -488,20 +522,25 @@ def validate_conveyance_distance_hypothesis(self, query_set):
             shortest_conveyance = self.measure_path_conveyance(shortest, query)
             
             # Find highest conveyance path (regardless of length)
-            all_paths = self.graph.all_simple_paths(start, target, cutoff=8)
+            all_paths = list(self.graph.all_simple_paths(start, target, cutoff=8))
+
+            # Check if any paths exist
+            if not all_paths:
+                continue  # Skip if no paths found
+
             conveyance_ranked = sorted(
-                all_paths, 
+                all_paths,
                 key=lambda p: self.measure_path_conveyance(p, query),
                 reverse=True
             )
             highest_conveyance_path = conveyance_ranked[0]
-            
+
             results.append({
                 'query': query,
                 'shortest_length': len(shortest),
                 'highest_conveyance_length': len(highest_conveyance_path),
                 'shortest_conveyance': shortest_conveyance,
-                'highest_conveyance': conveyance_ranked[0],
+                'highest_conveyance': self.measure_path_conveyance(conveyance_ranked[0], query),
                 'efficiency_ratio': conveyance_ranked[0] / len(highest_conveyance_path)
             })
     
@@ -513,6 +552,7 @@ def validate_conveyance_distance_hypothesis(self, query_set):
 ## **The "Bad Turn" Detection**
 
 ### **Real-Time Course Correction**
+
 ```python
 def detect_bad_turns(self, path, conveyance_history):
     """Detect when we're going off-track"""
@@ -555,6 +595,7 @@ def backtrack_and_retry(self, path, conveyance_history, query):
 ## **Model "Exploration Time"**
 
 ### **Graph Exploration as Thinking**
+
 ```python
 class ConveyanceExploration:
     """Give model time to explore before committing to path"""
@@ -608,11 +649,13 @@ class ConveyanceExploration:
 ## **Your Advantage is HUGE**
 
 **Traditional RAG systems**:
+
 - Network-bound (100ms+ per hop)
 - Must minimize hops
 - Optimize for proxy metrics (distance, similarity)
 
 **Your system**:
+
 - Memory-bound (<1ms per hop)
 - Can afford exploration
 - Optimize for real objective (conveyance)

@@ -234,7 +234,7 @@ def main():
         # Setup collections
         setup_database(db, config, logger)
 
-    except Exception as e:
+    except Exception:
         logger.exception("Database connection failed")
         raise
 
