@@ -11,10 +11,15 @@ from .factory import EmbedderFactory
 # Auto-register available embedders
 try:
     from .jina_v4 import ChunkWithEmbedding, JinaV4Embedder
+    from .jina_v4_transformers import JinaV4TransformersEmbedder
 
+    # Default to sentence-transformers (single GPU)
     EmbedderFactory.register("jina", JinaV4Embedder)
+    # Also register transformers version for multi-GPU
+    EmbedderFactory.register("jina-transformers", JinaV4TransformersEmbedder)
 except ImportError:
     JinaV4Embedder = None  # type: ignore[misc]
+    JinaV4TransformersEmbedder = None  # type: ignore[misc]
     ChunkWithEmbedding = None  # type: ignore[misc]
 
 __all__ = [

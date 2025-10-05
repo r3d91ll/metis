@@ -143,12 +143,16 @@ def main():
             save_json_incremental(citation_data, output_file, logger)
 
             logger.info(f"Successfully collected {citation_data['total_citations']} citations")
-            logger.info(
-                f"Date range: {citation_data['monthly_citations'][0]['year']}-"
-                f"{citation_data['monthly_citations'][0]['month']} to "
-                f"{citation_data['monthly_citations'][-1]['year']}-"
-                f"{citation_data['monthly_citations'][-1]['month']}"
-            )
+            monthly_citations = citation_data.get('monthly_citations', [])
+            if monthly_citations and len(monthly_citations) > 0:
+                logger.info(
+                    f"Date range: {monthly_citations[0]['year']}-"
+                    f"{monthly_citations[0]['month']} to "
+                    f"{monthly_citations[-1]['year']}-"
+                    f"{monthly_citations[-1]['month']}"
+                )
+            else:
+                logger.info("Date range: no valid citation dates available")
 
         except Exception as e:
             logger.error(f"Failed to collect citations for {paper_name}: {e}")

@@ -165,7 +165,7 @@ def search_repositories_for_paper(
             time.sleep(wait_time)
 
         except Exception as e:
-            logger.error(f"Error searching for query '{query}': {e}")
+            logger.exception(f"Error searching for query '{query}'")
             continue
 
     logger.info(f"Found {len(repositories)} unique repositories for {paper_name}")
@@ -239,7 +239,7 @@ def main():
             logger.info(f"Type distribution: {result['type_counts']}")
 
         except Exception as e:
-            logger.error(f"Failed to collect repositories for {paper_name}: {e}")
+            logger.exception(f"Failed to collect repositories for {paper_name}")
             raise
 
     logger.info("\n" + "=" * 60)

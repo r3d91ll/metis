@@ -19,7 +19,8 @@ import logging
 import sys
 from pathlib import Path
 from typing import Iterator, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+import time
 import yaml
 import argparse
 
@@ -55,13 +56,19 @@ class ArxivImportPipeline:
 
         logger.info(f"Loaded configuration from {config_path}")
 
-        # Initialize embedder
+        # Initialize embedder with late chunking support
         emb_config = self.config['embeddings']
         logger.info(f"Initializing embedder: {emb_config['model']}")
+        logger.info(f"  Device: {emb_config['device']}, Batch: {emb_config['batch_size']}, FP16: {emb_config.get('use_fp16', True)}")
+        logger.info(f"  Late chunking: {emb_config.get('chunk_size_tokens', 500)} tokens with {emb_config.get('chunk_overlap_tokens', 200)} overlap")
         self.embedder = create_embedder(
             emb_config['model'],
             device=emb_config['device'],
-            batch_size=emb_config['batch_size']
+            batch_size=emb_config['batch_size'],
+            use_fp16=emb_config.get('use_fp16', True),
+            max_seq_length=emb_config.get('max_length', 32768),
+            chunk_size_tokens=emb_config.get('chunk_size_tokens', 500),
+            chunk_overlap_tokens=emb_config.get('chunk_overlap_tokens', 200)
         )
 
         # Database configuration
@@ -101,7 +108,7 @@ class ArxivImportPipeline:
         logger.info(f"Data source: {self.data_file}")
         logger.info(f"Target database: {self.config['database']['name']}")
         logger.info(f"Socket path: {self.config['database']['socket_path']}")
-        logger.info(f"TCP endpoint: http://localhost:8529 (for admin operations)")
+        logger.info("TCP endpoint: http://localhost:8529 (for admin operations)")
 
     def read_papers(self, skip: int = 0, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
         """
@@ -131,7 +138,7 @@ class ArxivImportPipeline:
                     paper = json.loads(line)
                     yield paper
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse line {i}: {e}")
+                    logger.exception(f"Failed to parse line {i}")
                     continue
 
     def process_paper(self, paper: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -163,56 +170,57 @@ class ArxivImportPipeline:
             else:
                 authors = authors_field
 
-            # Prepare document
-            doc = {
+            # Prepare three separate documents for three collections
+
+            # 1. Metadata document (papers collection - lightweight, heavily indexed)
+            metadata_doc = {
                 "_key": parsed.internal_id,
                 "arxiv_id": paper['id'],
-
-                # Content
-                "title": paper.get('title', '').strip(),
-                "abstract": paper.get('abstract', '').strip(),
-
-                # Authors
                 "authors": authors,
                 "authors_parsed": paper.get('authors_parsed', []),
-
-                # Categories
                 "categories": categories,
                 "primary_category": primary_category,
-
-                # Temporal data
                 "submission_date": submission_date.isoformat() if submission_date else None,
                 "update_date": paper.get('update_date'),
                 "year": parsed.year,
                 "month": parsed.month,
                 "year_month": f"{parsed.year:04d}-{parsed.month:02d}",
-
-                # Publication metadata
                 "journal_ref": paper.get('journal-ref'),
                 "doi": paper.get('doi'),
                 "comments": paper.get('comments'),
                 "license": paper.get('license'),
                 "report_no": paper.get('report-no'),
                 "submitter": paper.get('submitter'),
-
-                # Version history
                 "versions": paper.get('versions', []),
                 "version_count": len(paper.get('versions', [])),
-
-                # Embeddings (will be filled in next step)
-                "title_embedding": None,
-                "abstract_embedding": None,
-                "combined_embedding": None,
-
-                # Metadata
-                "created_at": datetime.utcnow().isoformat(),
-                "import_batch": None  # Will be set during import
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
 
-            return doc
+            # 2. Abstract document (abstracts collection - full text)
+            abstract_doc = {
+                "_key": parsed.internal_id,
+                "arxiv_id": paper['id'],
+                "title": paper.get('title', '').strip(),
+                "abstract": paper.get('abstract', '').strip(),
+            }
+
+            # 3. Embedding document (embeddings collection - vectors only)
+            embedding_doc = {
+                "_key": parsed.internal_id,
+                "arxiv_id": paper['id'],
+                "title_embedding": None,  # Will be filled in next step
+                "abstract_embedding": None,
+                "combined_embedding": None,
+            }
+
+            return {
+                "metadata": metadata_doc,
+                "abstract": abstract_doc,
+                "embedding": embedding_doc
+            }
 
         except Exception as e:
-            logger.error(f"Failed to process paper {paper.get('id', 'unknown')}: {e}")
+            logger.exception(f"Failed to process paper {paper.get('id', 'unknown')}")
             return None
 
     def generate_embeddings(self, documents: list[Dict[str, Any]]) -> None:
@@ -220,12 +228,13 @@ class ArxivImportPipeline:
         Generate embeddings for batch of documents (in-place modification).
 
         Uses Jina v4 with 32k context window and 2048 dimensions.
+        Updates the 'embedding' sub-document for each paper.
         """
-        # Extract texts (handle None/empty values)
-        titles = [doc.get('title', '') or '' for doc in documents]
-        abstracts = [doc.get('abstract', '') or '' for doc in documents]
+        # Extract texts from abstract sub-documents
+        titles = [doc['abstract'].get('title', '') or '' for doc in documents]
+        abstracts = [doc['abstract'].get('abstract', '') or '' for doc in documents]
         combined = [
-            f"{doc.get('title', '') or ''}\n\n{doc.get('abstract', '') or ''}"
+            f"{doc['abstract'].get('title', '') or ''}\n\n{doc['abstract'].get('abstract', '') or ''}"
             for doc in documents
         ]
 
@@ -235,11 +244,11 @@ class ArxivImportPipeline:
         abstract_embeds = self.embedder.embed_texts(abstracts)
         combined_embeds = self.embedder.embed_texts(combined)
 
-        # Attach to documents
+        # Attach to embedding sub-documents
         for i, doc in enumerate(documents):
-            doc['title_embedding'] = title_embeds[i].tolist()
-            doc['abstract_embedding'] = abstract_embeds[i].tolist()
-            doc['combined_embedding'] = combined_embeds[i].tolist()
+            doc['embedding']['title_embedding'] = title_embeds[i].tolist()
+            doc['embedding']['abstract_embedding'] = abstract_embeds[i].tolist()
+            doc['embedding']['combined_embedding'] = combined_embeds[i].tolist()
 
     def import_batch(
         self,
@@ -248,49 +257,57 @@ class ArxivImportPipeline:
         batch_id: str
     ) -> Dict[str, int]:
         """
-        Import batch of documents with embeddings.
+        Import batch of documents to three separate collections.
 
         Returns:
             Statistics dictionary with counts
         """
-        # Set batch ID
-        for doc in documents:
-            doc['import_batch'] = batch_id
+        collections = self.config['database']['collections']
 
-        # Insert documents
-        collection = self.config['database']['collections']['papers']
-        result = client.bulk_import(collection, documents)
+        # Add batch ID to metadata documents
+        for doc in documents:
+            doc['metadata']['import_batch'] = batch_id
+
+        # Extract documents for each collection
+        metadata_docs = [doc['metadata'] for doc in documents]
+        abstract_docs = [doc['abstract'] for doc in documents]
+        embedding_docs = [doc['embedding'] for doc in documents]
+
+        # Insert into three collections
+        metadata_count = client.bulk_import(collections['papers'], metadata_docs)
+        abstract_count = client.bulk_import(collections['abstracts'], abstract_docs)
+        embedding_count = client.bulk_import(collections['embeddings'], embedding_docs)
 
         stats = {
-            'created': result.get('created', 0),
-            'errors': result.get('errors', 0),
-            'empty': result.get('empty', 0)
+            'created': metadata_count,
+            'errors': 0,
+            'empty': 0
         }
 
-        logger.info(
-            f"Batch {batch_id}: created={stats['created']}, "
-            f"errors={stats['errors']}, empty={stats['empty']}"
-        )
+        logger.info(f"Batch {batch_id}: inserted {metadata_count} metadata, {abstract_count} abstracts, {embedding_count} embeddings")
 
         return stats
 
     def create_database_if_needed(self) -> None:
-        """Create database via TCP if it doesn't exist (admin operation)."""
+        """Create database via Unix socket if it doesn't exist (admin operation)."""
         import httpx
+        import os
 
         db_name = self.config['database']['name']
         logger.info(f"Checking if database '{db_name}' exists...")
 
-        # Use TCP endpoint for admin operations
-        tcp_url = "http://localhost:8529"
+        # Use Unix socket for admin operations (metis proxy now supports database creation)
+        socket_path = self.config['database']['socket_path']
+
+        # Get credentials from environment
+        username = os.environ.get('ARANGO_USERNAME', 'root')
+        password = os.environ.get('ARANGO_PASSWORD', '')
 
         try:
             # Check if database exists
-            with httpx.Client() as client:
-                response = client.get(
-                    f"{tcp_url}/_api/database/user",
-                    auth=("root", "")  # Try with empty password
-                )
+            transport = httpx.HTTPTransport(uds=socket_path, retries=0)
+            with httpx.Client(transport=transport, base_url="http://arangodb") as client:
+                response = client.get("/_api/database/user", auth=(username, password))
 
                 if response.status_code == 200:
                     databases = response.json().get('result', [])
@@ -299,11 +316,11 @@ class ArxivImportPipeline:
                         return
 
                     # Create database
-                    logger.info(f"Creating database '{db_name}' via TCP...")
+                    logger.info(f"Creating database '{db_name}' via Unix socket...")
                     create_response = client.post(
-                        f"{tcp_url}/_api/database",
+                        "/_api/database",
                         json={"name": db_name},
-                        auth=("root", "")
+                        auth=(username, password)
                     )
 
                     if create_response.status_code in [200, 201]:
@@ -318,67 +335,53 @@ class ArxivImportPipeline:
                 else:
                     logger.warning(
                         f"Could not check databases (status {response.status_code}). "
-                        f"Database '{db_name}' may need to be created manually via web UI."
+                        f"Database '{db_name}' may need to be created manually."
                     )
         except Exception as e:
             logger.warning(
-                f"Could not create database via TCP: {e}. "
-                f"Please create database '{db_name}' manually via web UI at http://localhost:8529"
+                f"Could not create database via Unix socket: {e}. "
+                f"Please create database '{db_name}' manually"
             )
 
     def setup_database(self, client: ArangoClient) -> None:
         """Create collections and indexes (uses socket client)."""
-        logger.info("Setting up database schema...")
+        logger.info("Setting up database schema with separate collections...")
 
-        papers_collection = self.config['database']['collections']['papers']
+        collections_config = self.config['database']['collections']
 
-        # Define collection with indexes
-        indexes = [
-            {
-                'type': 'persistent',
-                'fields': ['arxiv_id'],
-                'unique': True,
-                'name': 'idx_arxiv_id'
-            },
-            {
-                'type': 'persistent',
-                'fields': ['categories[*]'],
-                'name': 'idx_categories'
-            },
-            {
-                'type': 'persistent',
-                'fields': ['year', 'month'],
-                'name': 'idx_year_month'
-            },
-            {
-                'type': 'persistent',
-                'fields': ['year_month'],
-                'name': 'idx_year_month_str'
-            },
-            {
-                'type': 'persistent',
-                'fields': ['primary_category'],
-                'name': 'idx_primary_category'
-            },
-            {
-                'type': 'persistent',
-                'fields': ['submission_date'],
-                'name': 'idx_submission_date'
-            },
+        # 1. Papers collection - Metadata only (lightweight, heavily indexed)
+        papers_indexes = [
+            {'type': 'persistent', 'fields': ['arxiv_id'], 'unique': True, 'name': 'idx_arxiv_id'},
+            {'type': 'persistent', 'fields': ['categories[*]'], 'name': 'idx_categories'},
+            {'type': 'persistent', 'fields': ['year', 'month'], 'name': 'idx_year_month'},
+            {'type': 'persistent', 'fields': ['year_month'], 'name': 'idx_year_month_str'},
+            {'type': 'persistent', 'fields': ['primary_category'], 'name': 'idx_primary_category'},
+            {'type': 'persistent', 'fields': ['submission_date'], 'name': 'idx_submission_date'},
         ]
 
-        # Create collection with indexes using CollectionDefinition
-        collection_def = CollectionDefinition(
-            name=papers_collection,
-            type="document",
-            indexes=indexes
-        )
+        # 2. Abstracts collection - Full text content (minimal indexes)
+        abstracts_indexes = [
+            {'type': 'persistent', 'fields': ['arxiv_id'], 'unique': True, 'name': 'idx_arxiv_id'},
+        ]
+
+        # 3. Embeddings collection - Vector embeddings (minimal indexes, large documents)
+        embeddings_indexes = [
+            {'type': 'persistent', 'fields': ['arxiv_id'], 'unique': True, 'name': 'idx_arxiv_id'},
+        ]
+
+        collection_defs = [
+            CollectionDefinition(name=collections_config['papers'], type="document", indexes=papers_indexes),
+            CollectionDefinition(name=collections_config['abstracts'], type="document", indexes=abstracts_indexes),
+            CollectionDefinition(name=collections_config['embeddings'], type="document", indexes=embeddings_indexes),
+        ]
 
         try:
-            client.create_collections([collection_def])
-            logger.info(f"Created collection: {papers_collection} with {len(indexes)} indexes")
+            client.create_collections(collection_defs)
+            logger.info("Created 3 collections:")
+            logger.info(f"  - {collections_config['papers']}: metadata ({len(papers_indexes)} indexes)")
+            logger.info(f"  - {collections_config['abstracts']}: full text ({len(abstracts_indexes)} indexes)")
+            logger.info(f"  - {collections_config['embeddings']}: vectors ({len(embeddings_indexes)} indexes)")
         except Exception as e:
-            # Collection may already exist
             logger.info(f"Collection setup: {e}")
 
         logger.info("Database setup complete")
@@ -490,7 +493,7 @@ class ArxivImportPipeline:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Import arXiv papers to ArangoDB')
+    parser = argparse.ArgumentParser(description='Import arXiv papers and build graph with GNN')
     parser.add_argument(
         '--config',
         type=Path,
@@ -514,22 +517,147 @@ def main():
         action='store_true',
         help='Skip database setup (assume schema exists)'
     )
+    parser.add_argument(
+        '--build-edges',
+        action='store_true',
+        help='Build graph edges after import'
+    )
+    parser.add_argument(
+        '--export-graph',
+        action='store_true',
+        help='Export graph to PyG format after building edges'
+    )
+    parser.add_argument(
+        '--train-gnn',
+        action='store_true',
+        help='Train GraphSAGE model after exporting graph'
+    )
+    parser.add_argument(
+        '--full-pipeline',
+        action='store_true',
+        help='Run complete pipeline: import + edges + graph + training'
+    )
 
     args = parser.parse_args()
 
-    # Run pipeline
+    # Full pipeline enables all stages
+    if args.full_pipeline:
+        args.build_edges = True
+        args.export_graph = True
+        args.train_gnn = True
+
+    # Stage 1: Import papers
+    print("=" * 60)
+    print("STAGE 1: Importing Papers")
+    print("=" * 60)
+
+    stage1_start = time.time()
     pipeline = ArxivImportPipeline(args.config)
     stats = pipeline.run(
         skip=args.skip,
         limit=args.limit,
         setup_db=not args.no_setup
     )
+    stage1_time = time.time() - stage1_start
 
-    # Exit code based on success
+    print(f"\nImport complete: {stats['total_created']:,} papers created, {stats['total_errors']:,} errors")
+    print(f"Time: {stage1_time:.1f}s ({stats['total_created']/stage1_time:.1f} papers/sec)" if stage1_time > 0 and stats['total_created'] > 0 else f"Time: {stage1_time:.1f}s")
+    print(f"Batches processed: {stats['batches']:,}")
+
     if stats['total_errors'] > stats['total_created']:
+        print("ERROR: Import failed with too many errors")
         sys.exit(1)
-    else:
-        sys.exit(0)
+
+    # Stage 2: Build edges
+    if args.build_edges:
+        print("\n" + "=" * 60)
+        print("STAGE 2: Building Graph Edges")
+        print("=" * 60)
+
+        stage2_start = time.time()
+        from edge_builder import EdgeBuilder
+        edge_builder = EdgeBuilder(args.config)
+        edge_stats = edge_builder.run()
+        stage2_time = time.time() - stage2_start
+
+        print(f"\nEdge building complete: {edge_stats['total']:,} total edges")
+        print(f"  - Category links: {edge_stats['category_links']:,}")
+        print(f"  - Temporal succession: {edge_stats['temporal_succession']:,}")
+        if stage2_time > 0 and edge_stats['total'] > 0:
+            print(f"Time: {stage2_time:.1f}s ({edge_stats['total']/stage2_time:.1f} edges/sec)")
+        else:
+            print(f"Time: {stage2_time:.1f}s")
+
+        if edge_stats['total'] == 0:
+            print("ERROR: No edges were created!")
+            sys.exit(1)
+
+    # Stage 3: Export graph
+    if args.export_graph:
+        print("\n" + "=" * 60)
+        print("STAGE 3: Exporting Graph to PyG")
+        print("=" * 60)
+
+        stage3_start = time.time()
+        from graph_pipeline import ArxivGraphPipeline
+        graph_pipeline = ArxivGraphPipeline(args.config)
+        graph_path = graph_pipeline.export_graph()
+        stage3_time = time.time() - stage3_start
+
+        file_size_mb = graph_path.stat().st_size / (1024**2)
+        print(f"\nGraph exported to: {graph_path}")
+        print(f"File size: {file_size_mb:.1f} MB")
+        print(f"Time: {stage3_time:.1f}s")
+
+    # Stage 4: Train GNN
+    if args.train_gnn:
+        print("\n" + "=" * 60)
+        print("STAGE 4: Training GraphSAGE")
+        print("=" * 60)
+
+        stage4_start = time.time()
+        from train_gnn import train_gnn
+        train_gnn(args.config)
+        stage4_time = time.time() - stage4_start
+
+        print(f"\nGNN training time: {stage4_time:.1f}s ({stage4_time/60:.1f} minutes)")
+
+    # Final summary
+    total_time = time.time() - stage1_start
+    print("\n" + "=" * 60)
+    print("PIPELINE COMPLETE")
+    print("=" * 60)
+    print(f"\nPapers imported: {stats['total_created']:,}")
+    if args.build_edges:
+        print(f"Edges created: {edge_stats['total']:,}")
+        print(f"  - Category links: {edge_stats['category_links']:,}")
+        print(f"  - Temporal succession: {edge_stats['temporal_succession']:,}")
+    if args.export_graph:
+        print(f"Graph file: {graph_path}")
+        print(f"Graph size: {file_size_mb:.1f} MB")
+    if args.train_gnn:
+        checkpoint_dir = Path("models/arxiv_checkpoints")
+        best_checkpoint = checkpoint_dir / "best.pt"
+        if best_checkpoint.exists():
+            checkpoint_size_mb = best_checkpoint.stat().st_size / (1024**2)
+            print(f"Model checkpoint: {best_checkpoint}")
+            print(f"Model size: {checkpoint_size_mb:.1f} MB")
+
+    print(f"\n{'Stage':<25} {'Time':<15} {'Throughput':<20}")
+    print("-" * 60)
+    if stats['total_created'] > 0 and stage1_time > 0:
+        print(f"{'1. Import Papers':<25} {stage1_time:>8.1f}s      {stats['total_created']/stage1_time:>8.1f} papers/sec")
+    if args.build_edges and edge_stats['total'] > 0 and stage2_time > 0:
+        print(f"{'2. Build Edges':<25} {stage2_time:>8.1f}s      {edge_stats['total']/stage2_time:>8.1f} edges/sec")
+    if args.export_graph:
+        print(f"{'3. Export Graph':<25} {stage3_time:>8.1f}s")
+    if args.train_gnn:
+        print(f"{'4. Train GNN':<25} {stage4_time:>8.1f}s      {stage4_time/60:>8.1f} minutes")
+    print("-" * 60)
+    print(f"{'TOTAL':<25} {total_time:>8.1f}s      {total_time/60:>8.1f} minutes")
+    print("=" * 60)
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":

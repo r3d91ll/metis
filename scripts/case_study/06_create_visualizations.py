@@ -108,13 +108,11 @@ def create_paper_sections_map(
         return
 
     coords = reduced_embeddings[indices]
-    section_labels = [labels[i] for i in indices]
     section_metadata = [metadata[i] for i in indices]
 
     # Create color mapping by paper
     papers = list(set(meta["paper"] for meta in section_metadata))
     color_map = {paper: i for i, paper in enumerate(papers)}
-    colors = [color_map[meta["paper"]] for meta in section_metadata]
 
     # Create hover text
     hover_text = [
@@ -167,7 +165,7 @@ def create_paper_sections_map(
 
 
 def create_full_ecosystem_map(
-    reduced_embeddings: np.ndarray, labels: list, metadata: list, output_path: Path, logger
+    reduced_embeddings: np.ndarray, metadata: list, output_path: Path, logger
 ):
     """Create full ecosystem map with papers and boundary objects.
 
@@ -197,9 +195,6 @@ def create_full_ecosystem_map(
                 f"Paper: {meta['paper']}"
             )
         hover_text.append(text)
-
-    # Create marker sizes (larger for papers)
-    sizes = [15 if meta["type"] == "paper_section" else 10 for meta in metadata]
 
     # Create color mapping
     type_map = {}
@@ -440,7 +435,9 @@ def main():
         from metis.database import ArangoDBClient
 
         logger.info("Connecting to ArangoDB")
-        db = ArangoDBClient(socket_path="/tmp/arangodb.sock")
+        import os
+        socket_path = os.getenv("ARANGODB_SOCKET", "/run/hades/readwrite/arangod.sock")
+        db = ArangoDBClient(socket_path=socket_path)
 
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
@@ -475,7 +472,7 @@ def main():
         )
 
         create_full_ecosystem_map(
-            reduced, labels, metadata, output_dir / "full_ecosystem.html", logger
+            reduced, metadata, output_dir / "full_ecosystem.html", logger
         )
 
     # Create timeline plots

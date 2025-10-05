@@ -73,7 +73,7 @@ def clone_repository_at_commit(
         return clone_path
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to clone repository: {e}")
+        logger.exception("Failed to clone repository")
         return None
 
 
@@ -224,7 +224,7 @@ def fetch_wayback_snapshot(url: str, target_date: str, logger) -> dict | None:
             return None
 
     except Exception as e:
-        logger.error(f"Error fetching Wayback snapshot: {e}")
+        logger.exception("Error fetching Wayback snapshot")
         return None
 
 
@@ -349,7 +349,7 @@ def main():
             logger.info(f"Saved {len(boundary_objects)} objects to {output_file}")
 
         except Exception as e:
-            logger.error(f"Failed to collect boundary objects for {paper_name}: {e}")
+            logger.exception(f"Failed to collect boundary objects for {paper_name}")
             raise
 
     logger.info("\n" + "=" * 60)

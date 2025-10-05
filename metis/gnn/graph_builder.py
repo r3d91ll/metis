@@ -30,7 +30,7 @@ except ImportError:
     TORCH_GEOMETRIC_AVAILABLE = False
     Data = None
 
-from metis.database import ArangoMemoryClient
+from metis.database import ArangoClient
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class GraphBuilder:
     Build PyG Data object from ArangoDB graph.
     """
 
-    def __init__(self, client: ArangoMemoryClient):
+    def __init__(self, client: ArangoClient):
         """
         Initialize graph builder.
 
@@ -115,14 +115,18 @@ class GraphBuilder:
         node_idx = 0
 
         for collection in collections:
+            # Try different embedding field names (code repos vs arXiv papers)
+            # First try combined_embedding (arXiv), then embedding (code repos)
             aql = f"""
             FOR doc IN {collection}
-              FILTER doc.embedding != null
+              LET emb = doc.combined_embedding != null ? doc.combined_embedding : doc.embedding
+              FILTER emb != null
               RETURN {{
                 _id: doc._id,
                 _key: doc._key,
                 path: doc.path,
-                embedding: doc.embedding,
+                arxiv_id: doc.arxiv_id,
+                embedding: emb,
                 metadata: doc.metadata
               }}
             """
@@ -138,11 +142,12 @@ class GraphBuilder:
 
                 features_list.append(embedding)
 
-                # Store metadata
+                # Store metadata (handle both code repos and arXiv papers)
                 metadata_list.append({
                     "arango_id": doc["_id"],
                     "key": doc["_key"],
                     "path": doc.get("path", ""),
+                    "arxiv_id": doc.get("arxiv_id", ""),
                     "collection": collection,
                 })
 
@@ -169,11 +174,11 @@ class GraphBuilder:
         edge_types: Optional[List[str]] = None,
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
-        Extract edges from code_edges collection.
+        Extract edges from edge collections.
 
         Args:
             node_id_map: Mapping from node_idx → arango_id
-            edge_types: Edge types to include (None = all)
+            edge_types: Edge collection names to query (None = try common names)
 
         Returns:
             (edge_index_dict, edge_attr_dict) where:
@@ -186,34 +191,67 @@ class GraphBuilder:
         edge_index_dict = {}
         edge_attr_dict = {}
 
-        # Query all edges
-        aql = """
-        FOR edge IN code_edges
-          RETURN {
-            _from: edge._from,
-            _to: edge._to,
-            type: edge.type,
-            weight: edge.weight
-          }
-        """
+        # Default edge collection names (try common patterns)
+        if edge_types is None:
+            edge_types = [
+                "code_edges",           # HADES code repositories
+                "category_links",       # arXiv category co-occurrence
+                "temporal_succession",  # arXiv temporal edges
+                "citations",            # Citation networks
+            ]
 
-        edges = self.client.execute_query(aql, {})
+        # Query edges from each collection (use batching to avoid chunked encoding issues)
+        all_edges = []
+        batch_size = 1000  # Process edges in batches
+
+        for edge_collection in edge_types:
+            try:
+                # First, count edges
+                count_result = self.client.execute_query(
+                    f"RETURN LENGTH({edge_collection})", {}
+                )
+                total_edges = count_result[0] if count_result else 0
+
+                if total_edges == 0:
+                    continue
+
+                logger.warning(f"Found {total_edges} edges in {edge_collection}, loading in batches...")
+
+                # Load edges in batches using LIMIT/SKIP
+                for offset in range(0, total_edges, batch_size):
+                    aql = f"""
+                    FOR edge IN {edge_collection}
+                      LIMIT {offset}, {batch_size}
+                      RETURN {{
+                        _from: edge._from,
+                        _to: edge._to,
+                        type: edge.type,
+                        weight: edge.weight,
+                        collection: "{edge_collection}"
+                      }}
+                    """
+                    edges = self.client.execute_query(aql, {})
+                    all_edges.extend(edges)
+
+                logger.warning(f"Loaded {total_edges} edges from {edge_collection}")
+            except Exception as e:
+                logger.warning(f"Skipping collection {edge_collection}: {e}")
+
+        logger.warning(f"Total edges loaded from all collections: {len(all_edges)}")
 
         # Group by edge type
         edges_by_type = {}
+        skipped_count = 0
 
-        for edge in edges:
+        for edge in all_edges:
             edge_type = edge.get("type", "unknown")
-
-            # Filter by edge types if specified
-            if edge_types and edge_type not in edge_types:
-                continue
 
             from_id = edge["_from"]
             to_id = edge["_to"]
 
             # Skip if nodes not in graph
             if from_id not in id_to_idx or to_id not in id_to_idx:
+                skipped_count += 1
                 continue
 
             from_idx = id_to_idx[from_id]
@@ -224,6 +262,13 @@ class GraphBuilder:
                 edges_by_type[edge_type] = []
 
             edges_by_type[edge_type].append((from_idx, to_idx, weight))
+
+        if skipped_count > 0:
+            logger.warning(f"Skipped {skipped_count} edges (nodes not in graph)")
+        if edges_by_type:
+            logger.info(f"Grouped edges by type: {[(k, len(v)) for k, v in edges_by_type.items()]}")
+        else:
+            logger.warning(f"No edges matched after grouping! All edges loaded: {len(all_edges)}, All skipped: {skipped_count}")
 
         # Convert to PyG format
         for edge_type, edge_list in edges_by_type.items():

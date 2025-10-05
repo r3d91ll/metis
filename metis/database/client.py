@@ -61,6 +61,10 @@ class ArangoHttp2Client:
         self._config = config
 
         # Support both Unix socket and TCP
+        # When using Unix socket, disable HTTP/2 in client since the Go proxy
+        # already handles HTTP/2 to ArangoDB. This avoids chunked encoding issues.
+        use_http2 = not bool(config.socket_path)
+
         if config.socket_path:
             # Unix socket (preferred for performance)
             transport = httpx.HTTPTransport(
@@ -84,7 +88,7 @@ class ArangoHttp2Client:
             auth = (config.username, config.password)
 
         self._client = httpx.Client(
-            http2=True,
+            http2=use_http2,
             base_url=config.base_url,
             transport=transport,
             timeout=timeout,

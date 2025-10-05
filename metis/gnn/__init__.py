@@ -35,8 +35,13 @@ Usage:
 
 from .graphsage_model import MultiRelationalGraphSAGE  # noqa: F401
 from .inference import GraphSAGEInference  # noqa: F401
+from .graph_builder import GraphBuilder  # noqa: F401
+from .trainer import GraphSAGETrainer, TrainingConfig  # noqa: F401
 
 __all__ = [
     "MultiRelationalGraphSAGE",
     "GraphSAGEInference",
+    "GraphBuilder",
+    "GraphSAGETrainer",
+    "TrainingConfig",
 ]

@@ -89,10 +89,10 @@ def extract_paper_sections(pdf_path: Path, logger) -> dict[str, str]:
         return sections
 
     except ImportError:
-        logger.error("PDFExtractor not available. Install with: poetry install -E pdf")
+        logger.exception("PDFExtractor not available. Install with: poetry install -E pdf")
         raise
     except Exception as e:
-        logger.error(f"Error extracting sections: {e}")
+        logger.exception("Error extracting sections")
         raise
 
 

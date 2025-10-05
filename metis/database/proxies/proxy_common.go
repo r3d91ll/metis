@@ -152,10 +152,27 @@ func (p *UnixReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var upstreamBody io.ReadCloser
+	var contentLength int64
+
 	if bodyConsumed {
 		upstreamBody = io.NopCloser(bytes.NewReader(cachedBody))
+		contentLength = int64(len(cachedBody))
 	} else {
-		upstreamBody = r.Body
+		// For requests with bodies (POST/PUT/PATCH), buffer the entire body
+		// to avoid chunked encoding (ArangoDB doesn't support chunked encoding)
+		if r.Body != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+			buf, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "failed to read request body", http.StatusInternalServerError)
+				return
+			}
+			_ = r.Body.Close()
+			upstreamBody = io.NopCloser(bytes.NewReader(buf))
+			contentLength = int64(len(buf))
+		} else {
+			upstreamBody = r.Body
+			contentLength = r.ContentLength
+		}
 	}
 
 	upstreamURL := buildUpstreamURL(r)
@@ -166,8 +183,8 @@ func (p *UnixReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	copyHeaders(upstreamReq.Header, r.Header)
-	if bodyConsumed {
-		upstreamReq.ContentLength = int64(len(cachedBody))
+	if contentLength >= 0 {
+		upstreamReq.ContentLength = contentLength
 	}
 
 	resp, err := p.client.Do(upstreamReq)

@@ -35,6 +35,7 @@ func RunReadWriteProxy() error {
 }
 
 var dbScopedRW = regexp.MustCompile(`^/_db/[^/]+/_api/(document|index|collection|import|cursor)(/|$)`) // DB-scoped only
+var databaseAdminRW = regexp.MustCompile(`^/_api/database(/[^/]+)?$`) // Database management: /_api/database or /_api/database/{name}
 
 func allowReadWrite(r *http.Request, peek BodyPeeker) error {
     // Permit safe RO requests as-is (GET, HEAD, OPTIONS, and safe cursor operations)
@@ -42,10 +43,24 @@ func allowReadWrite(r *http.Request, peek BodyPeeker) error {
         return nil
     }
 
-    // For mutations (POST, PUT, PATCH, DELETE), enforce DB-scoped endpoints only
     path := r.URL.Path
+
+    // Allow database management operations (create, drop, list databases)
+    if databaseAdminRW.MatchString(path) {
+        switch r.Method {
+        case http.MethodPost:
+            // POST /_api/database - create database
+            return nil
+        case http.MethodDelete:
+            // DELETE /_api/database/{name} - drop database
+            return nil
+        }
+        return fmt.Errorf("method %s not permitted on database admin endpoint %s", r.Method, path)
+    }
+
+    // For mutations (POST, PUT, PATCH, DELETE), enforce DB-scoped endpoints only
     if !dbScopedRW.MatchString(path) {
-        // Explicitly forbid admin endpoints like /_api/database, /_api/view, /_api/analyzer
+        // Explicitly forbid other admin endpoints like /_api/view, /_api/analyzer
         return fmt.Errorf("path not permitted: %s (DB-scoped endpoints only)", path)
     }
 

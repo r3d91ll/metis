@@ -97,7 +97,17 @@ class EmbedderFactory:
         Returns:
             Embedder type string
         """
-        # Metis uses SentenceTransformers-backed Jina embedder as default.
+        # Prefer transformers-backed Jina embedder when requested via model name hint.
+        # Accept markers like "-transformers" to select the direct HF transformers backend.
+        try:
+            name = (model_name or "").lower()
+        except Exception:
+            name = ""
+
+        if "transformers" in name:
+            return "jina-transformers"
+
+        # Default: SentenceTransformers-backed Jina embedder.
         return "jina"
 
     @classmethod
@@ -112,6 +122,9 @@ class EmbedderFactory:
             if embedder_type == "jina":
                 from .jina_v4 import JinaV4Embedder
                 cls.register("jina", JinaV4Embedder)
+            elif embedder_type == "jina-transformers":
+                from .jina_v4_transformers import JinaV4TransformersEmbedder
+                cls.register("jina-transformers", JinaV4TransformersEmbedder)
             else:
                 logger.warning(f"Unknown embedder type: {embedder_type}")
         except ImportError as e:

@@ -71,7 +71,7 @@ def generate_embeddings_batch(texts: list[str], embedder, logger) -> list[list[f
         return embeddings
 
     except Exception as e:
-        logger.error(f"Error generating embeddings: {e}")
+        logger.exception("Error generating embeddings")
         raise
 
 
@@ -123,7 +123,7 @@ def store_paper_in_db(
         return result["_key"]
 
     except Exception as e:
-        logger.error(f"Error storing paper in database: {e}")
+        logger.exception("Error storing paper in database")
         raise
 
 
@@ -172,7 +172,7 @@ def store_boundary_object_in_db(
         return result["_key"]
 
     except Exception as e:
-        logger.error(f"Error storing boundary object in database: {e}")
+        logger.exception("Error storing boundary object in database")
         raise
 
 
@@ -201,7 +201,7 @@ def setup_database(db, config: dict, logger):
             logger.info(f"Collection {collection_name} already exists")
 
     except Exception as e:
-        logger.error(f"Error setting up database: {e}")
+        logger.exception("Error setting up database")
         raise
 
 
@@ -219,7 +219,7 @@ def main():
         embedder = JinaV4Embedder()
 
     except ImportError:
-        logger.error("JinaV4Embedder not available. Check metis installation.")
+        logger.exception("JinaV4Embedder not available. Check metis installation.")
         raise
 
     # Initialize database
@@ -227,13 +227,15 @@ def main():
         from metis.database import ArangoDBClient
 
         logger.info("Connecting to ArangoDB")
-        db = ArangoDBClient(socket_path="/tmp/arangodb.sock")
+        import os
+        socket_path = os.getenv("ARANGODB_SOCKET", "/run/hades/readwrite/arangod.sock")
+        db = ArangoDBClient(socket_path=socket_path)
 
         # Setup collections
         setup_database(db, config, logger)
 
     except Exception as e:
-        logger.error(f"Database connection failed: {e}")
+        logger.exception("Database connection failed")
         raise
 
     # Load data
