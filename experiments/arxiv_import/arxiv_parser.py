@@ -4,15 +4,20 @@ arXiv ID Parser and Date Utilities
 Handles both old (archive/YYMMNNN) and new (YYMM.NNNNN) arXiv ID formats,
 converting them to a canonical internal format for consistent sorting and retrieval.
 
-Internal ID Format: YYYYMM_SSSSS
-- YYYYMM: 6-digit year-month (e.g., 199901, 202301)
-- SSSSS: 5-digit zero-padded sequence number
+Internal ID Format:
+- Old format: ARCHIVE_YYYYMM_SSSSS (includes archive prefix for uniqueness)
+- New format: YYYYMM_SSSSS (no archive prefix needed)
 
 Examples:
-    hep-ph/9901001  → 199901_00001
-    astro-ph/0703001 → 200703_00001
-    0704.0001       → 200704_00001
-    2301.12345      → 202301_12345
+    hep-ph/9901001    → hep_ph_199901_00001
+    astro-ph/0703001  → astro_ph_200703_00001
+    math.GT/0309136   → math_GT_200309_00136
+    0704.0001         → 200704_00001
+    2301.12345        → 202301_12345
+
+Note: Archive prefix is REQUIRED for old format because different archives
+      have independent sequence numbering (e.g., hep-ph/9411001 and
+      astro-ph/9411001 are DIFFERENT papers).
 """
 
 from dataclasses import dataclass
@@ -27,7 +32,7 @@ class ParsedArxivId:
     """Parsed arXiv ID with normalized internal ID."""
 
     original_id: str
-    internal_id: str  # YYYYMM_SSSSS format
+    internal_id: str  # Old: ARCHIVE_YYYYMM_SSSSS, New: YYYYMM_SSSSS
     year: int
     month: int
     sequence: int
@@ -77,7 +82,13 @@ class ArxivIdParser:
 
         Examples:
             >>> ArxivIdParser.parse("hep-ph/9901001").internal_id
-            '199901_00001'
+            'hep_ph_199901_00001'
+            >>> ArxivIdParser.parse("astro-ph/0703001").internal_id
+            'astro_ph_200703_00001'
+            >>> ArxivIdParser.parse("math.GT/0309136").internal_id
+            'math_GT_200309_00136'
+            >>> ArxivIdParser.parse("0704.0001").internal_id
+            '200704_00001'
             >>> ArxivIdParser.parse("2301.12345").internal_id
             '202301_12345'
         """
@@ -101,7 +112,12 @@ class ArxivIdParser:
             if not (1 <= month <= 12):
                 raise ValueError(f"Invalid month in arXiv ID: {arxiv_id}")
 
-            internal_id = f"{year:04d}{month:02d}_{sequence:05d}"
+            # CRITICAL: Include archive prefix for old format to ensure uniqueness
+            # Different archives have independent sequence numbering, so:
+            #   hep-ph/9411001 ≠ astro-ph/9411001 (different papers!)
+            # Sanitize archive name: lowercase, replace dots/dashes with underscores for valid keys
+            archive_clean = archive.lower().replace('.', '_').replace('-', '_')
+            internal_id = f"{archive_clean}_{year:04d}{month:02d}_{sequence:05d}"
 
             return ParsedArxivId(
                 original_id=arxiv_id,
@@ -202,10 +218,12 @@ def normalize_arxiv_id(arxiv_id: str) -> str:
         arxiv_id: Original arXiv ID
 
     Returns:
-        Internal ID in YYYYMM_SSSSS format
+        Internal ID (format depends on old vs new)
 
     Examples:
         >>> normalize_arxiv_id("hep-ph/9901001")
-        '199901_00001'
+        'hep_ph_199901_00001'
+        >>> normalize_arxiv_id("0704.0001")
+        '200704_00001'
     """
     return ArxivIdParser.parse(arxiv_id).internal_id
