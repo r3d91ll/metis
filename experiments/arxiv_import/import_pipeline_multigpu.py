@@ -471,8 +471,11 @@ class MultiGPUArxivImporter:
         if limit:
             print(f"Limiting to {limit:,} papers")
 
-        batch = []
-        count = 0
+        # PHASE 1: Preload and parse all papers into RAM (CPU-bound, single-threaded)
+        print("Phase 1: Preloading and parsing papers into RAM...")
+        start_time = time.time()
+        all_docs = []
+        parse_errors = 0
 
         with open(self.data_file, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
@@ -486,29 +489,44 @@ class MultiGPUArxivImporter:
                     paper = json.loads(line)
                     doc = self.process_paper(paper)
                     if doc:
-                        batch.append(doc)
-                        count += 1
+                        all_docs.append(doc)
 
-                    if len(batch) >= self.batch_size:
-                        self.input_queue.put(batch)
-                        batch = []
-
-                        if count % 1000 == 0:
-                            print(f"Queued {count:,} papers")
+                    if len(all_docs) % 10000 == 0:
+                        elapsed = time.time() - start_time
+                        rate = len(all_docs) / elapsed if elapsed > 0 else 0
+                        print(f"Parsed {len(all_docs):,} papers ({rate:.1f} papers/sec)")
 
                 except Exception as e:
-                    logger.exception(f"Failed to parse line {i}")
+                    parse_errors += 1
+                    if parse_errors < 10:  # Only show first 10 errors
+                        logger.exception(f"Parse error on line {i}")
                     continue
 
-        # Final batch
-        if batch:
+        elapsed = time.time() - start_time
+        rate = len(all_docs) / elapsed if elapsed > 0 else 0
+        print(f"Phase 1 complete: Parsed {len(all_docs):,} papers in {elapsed:.1f}s ({rate:.1f} papers/sec)")
+        if parse_errors > 0:
+            print(f"Parse errors: {parse_errors:,}")
+
+        # PHASE 2: Queue batches for GPU workers (from RAM, fast)
+        print(f"Phase 2: Queueing {len(all_docs):,} papers for GPU workers...")
+        start_time = time.time()
+
+        for i in range(0, len(all_docs), self.batch_size):
+            batch = all_docs[i:i + self.batch_size]
             self.input_queue.put(batch)
+
+            if (i + self.batch_size) % 10000 == 0:
+                print(f"Queued {i + len(batch):,} papers")
+
+        elapsed = time.time() - start_time
+        print(f"Phase 2 complete: Queued {len(all_docs):,} papers in {elapsed:.1f}s")
 
         # Send poison pills
         for _ in range(self.num_workers):
             self.input_queue.put(None)
 
-        print(f"Queued all {count:,} papers for processing")
+        print(f"Total papers ready for processing: {len(all_docs):,}")
 
     def process_paper(self, paper: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Transform paper JSON into document structure."""

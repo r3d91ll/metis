@@ -11,11 +11,13 @@ Complete data collection pipeline for the **Transformers vs Capsules** anthropol
 ### 1. Core Infrastructure
 
 **Files Created**:
+
 - `config/case_study.yaml` - Configuration for papers, APIs, and collection parameters
 - `scripts/case_study/utils.py` - Shared utilities (logging, rate limiting, retry logic, validation)
 - `scripts/case_study/__init__.py` - Package initialization
 
 **Key Features**:
+
 - Retry logic with exponential backoff
 - Rate limiting for API calls
 - Incremental JSON saving with backups
@@ -25,35 +27,41 @@ Complete data collection pipeline for the **Transformers vs Capsules** anthropol
 ### 2. Data Collection Scripts
 
 **Script 01: Citation Collection** (`01_collect_citations.py`)
+
 - Fetches citation data from Semantic Scholar API
 - Aggregates citations into monthly buckets
 - Output: `data/case_study/citations/{paper}_citations.json`
 
 **Script 02: GitHub Repository Tracking** (`02_collect_github_repos.py`)
+
 - Searches GitHub for paper implementations
 - Classifies repositories (official, framework, tutorial, application, research)
 - Tracks stars, forks, creation dates, topics
 - Output: `data/case_study/implementations/{paper}_repos.json`
 
 **Script 03: Paper Extraction** (`03_extract_papers.py`)
+
 - Downloads papers from ArXiv
 - Extracts sections using Metis PDFExtractor
 - Captures metadata (authors, categories, dates)
 - Output: `data/case_study/papers/` (PDFs and extracted JSON)
 
 **Script 04: Boundary Objects Collection** (`04_collect_boundary_objects.py`)
+
 - Clones official repositories at early commits
 - Extracts documentation and code examples
 - Captures community implementations for papers without official code
 - Output: `data/case_study/boundary_objects/{paper}/`
 
 **Script 05: Embeddings Generation** (`05_generate_embeddings.py`)
+
 - Generates Jina v4 embeddings for all text content
 - Stores papers and boundary objects in ArangoDB
 - Schema: `case_study_papers` collection with embedded vectors
 - Output: ArangoDB documents with 2048-dim embeddings
 
 **Script 06: Visualization Generation** (`06_create_visualizations.py`)
+
 - Creates semantic maps using UMAP dimensionality reduction
 - Generates citation timeline comparisons
 - Creates repository statistics plots
@@ -63,6 +71,7 @@ Complete data collection pipeline for the **Transformers vs Capsules** anthropol
 ### 3. Orchestration
 
 **File**: `scripts/case_study/run_all.sh`
+
 - Executable bash script to run full pipeline
 - Color-coded logging
 - Error handling and progress reporting
@@ -72,10 +81,12 @@ Complete data collection pipeline for the **Transformers vs Capsules** anthropol
 ### 4. Testing
 
 **Files Created**:
+
 - `tests/case_study/__init__.py`
 - `tests/case_study/test_utils.py`
 
 **Test Coverage**:
+
 - Logging setup
 - Configuration loading
 - Rate limiter functionality
@@ -86,7 +97,8 @@ Complete data collection pipeline for the **Transformers vs Capsules** anthropol
 
 ### 5. Documentation
 
-**README.md** (scripts/case_study/)
+#### **README.md** (scripts/case_study/)
+
 - Complete pipeline documentation
 - Script-by-script details
 - Configuration guide
@@ -94,14 +106,16 @@ Complete data collection pipeline for the **Transformers vs Capsules** anthropol
 - Data schema reference
 - Performance benchmarks
 
-**DATA_SCHEMA.md**
+#### **DATA_SCHEMA.md**
+
 - TypeScript-style schema definitions
 - Field-by-field documentation
 - Validation rules
 - Example data
 - Size estimates
 
-**case_study_analysis.ipynb**
+#### **case_study_analysis.ipynb**
+
 - Jupyter notebook for analysis
 - Citation analysis
 - Repository statistics
@@ -112,6 +126,7 @@ Complete data collection pipeline for the **Transformers vs Capsules** anthropol
 ### 6. Dependencies Added
 
 Updated `pyproject.toml` with:
+
 ```toml
 arxiv = "^2.1.0"
 PyGithub = "^2.1.1"
@@ -124,7 +139,7 @@ kaleido = "0.2.1"
 
 ## Directory Structure Created
 
-```
+```text
 metis/
 ├── config/
 │   └── case_study.yaml
@@ -161,12 +176,14 @@ metis/
 ## Data Outputs
 
 ### Citation Data
+
 - Monthly citation counts (2017-2025)
 - Cumulative totals
 - Author information
 - Publication dates
 
 ### Repository Data
+
 - 50+ repositories per paper (target)
 - Classification by type
 - Star/fork counts
@@ -175,24 +192,28 @@ metis/
 - Language information
 
 ### Paper Content
+
 - Full PDF downloads
 - Section extraction (abstract, intro, methods, etc.)
 - Metadata (authors, categories, dates)
 - ArXiv integration
 
 ### Boundary Objects
+
 - Official documentation
 - Code examples
 - Community implementations
 - Early repository snapshots
 
 ### Embeddings
+
 - 2048-dimensional Jina v4 vectors
 - Stored in ArangoDB
 - Linked to source documents
 - Ready for semantic analysis
 
 ### Visualizations
+
 - Interactive semantic maps (UMAP projections)
 - Citation timeline comparisons
 - Repository statistics charts
@@ -201,11 +222,13 @@ metis/
 ## Integration with Metis
 
 **Uses Existing Components**:
+
 - `metis.database.ArangoDBClient` - Database connection
 - `metis.embedders.JinaV4Embedder` - Embedding generation
 - `metis.extractors.PDFExtractor` - PDF text extraction
 
 **Follows Metis Conventions**:
+
 - Poetry for dependency management
 - Ruff for linting/formatting (line-length=100)
 - Pytest for testing
@@ -215,12 +238,14 @@ metis/
 ## Testing the Pipeline
 
 ### Run All Tests
+
 ```bash
 cd /home/todd/olympus/metis
 pytest tests/case_study/ -v --cov=scripts.case_study
 ```
 
 ### Run Individual Scripts
+
 ```bash
 cd scripts/case_study
 python 01_collect_citations.py
@@ -229,6 +254,7 @@ python 02_collect_github_repos.py
 ```
 
 ### Run Full Pipeline
+
 ```bash
 cd scripts/case_study
 ./run_all.sh
@@ -237,27 +263,32 @@ cd scripts/case_study
 ## Environment Setup Required
 
 ### Optional (but recommended)
+
 ```bash
 export GITHUB_TOKEN=ghp_your_token_here
 ```
 
 ### Database
+
 - ArangoDB running with Unix socket at `/tmp/arangodb.sock`
 - Or configure socket path in `config/case_study.yaml`
 
 ## Next Steps for User
 
 1. **Install Dependencies**:
+
    ```bash
    poetry install
    ```
 
 2. **Configure GitHub Token** (optional):
+
    ```bash
    export GITHUB_TOKEN=your_token
    ```
 
 3. **Run Pipeline**:
+
    ```bash
    cd scripts/case_study
    ./run_all.sh
@@ -269,6 +300,7 @@ export GITHUB_TOKEN=ghp_your_token_here
    - Open visualizations in browser
 
 5. **Analyze Results**:
+
    ```bash
    jupyter notebook notebooks/case_study_analysis.ipynb
    ```
@@ -280,6 +312,7 @@ export GITHUB_TOKEN=ghp_your_token_here
 ## Success Criteria Met
 
 ✅ **Data Completeness**:
+
 - [x] Citation data collection script
 - [x] GitHub repository tracking script
 - [x] Paper extraction script
@@ -288,6 +321,7 @@ export GITHUB_TOKEN=ghp_your_token_here
 - [x] Visualization generation script
 
 ✅ **Code Quality**:
+
 - [x] All scripts implemented
 - [x] Comprehensive error handling
 - [x] Rate limiting and retry logic
@@ -295,12 +329,14 @@ export GITHUB_TOKEN=ghp_your_token_here
 - [x] Follows Metis conventions
 
 ✅ **Documentation**:
+
 - [x] README with complete instructions
 - [x] Data schema documentation
 - [x] API usage documented
 - [x] Jupyter notebook for analysis
 
 ✅ **Integration**:
+
 - [x] Uses existing Metis components
 - [x] Stores data in ArangoDB
 - [x] Generates Jina v4 embeddings
@@ -309,6 +345,7 @@ export GITHUB_TOKEN=ghp_your_token_here
 ## Performance Characteristics
 
 **Expected Runtime**: 25-35 minutes
+
 - Citation collection: ~30 seconds
 - GitHub repositories: ~5-10 minutes
 - Paper extraction: ~2 minutes
@@ -317,11 +354,13 @@ export GITHUB_TOKEN=ghp_your_token_here
 - Visualizations: ~1-2 minutes
 
 **Rate Limits Respected**:
+
 - Semantic Scholar: 1.5 req/s
 - GitHub: 5000/hour (authenticated) or 60/hour (unauthenticated)
 - ArXiv: No strict limit, reasonable delays
 
 **Storage Requirements**:
+
 - JSON files: ~5-10 MB total
 - PDFs: ~2-4 MB
 - ArangoDB: ~100-500 MB (with embeddings)
@@ -330,17 +369,20 @@ export GITHUB_TOKEN=ghp_your_token_here
 ## Code Quality
 
 **Linting**:
+
 ```bash
 ruff check scripts/case_study
 ruff format scripts/case_study
 ```
 
 **Type Checking** (if desired):
+
 ```bash
 mypy scripts/case_study
 ```
 
 **Test Coverage**:
+
 ```bash
 pytest tests/case_study/ --cov=scripts.case_study --cov-report=term-missing
 ```

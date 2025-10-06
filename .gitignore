@@ -147,3 +147,5 @@ yarn.lock
 *.crt
 credentials.json
 secrets.yaml
+
+data/arxiv-kaggle-latest.json
