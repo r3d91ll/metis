@@ -33,7 +33,6 @@ from queue import Empty
 import time
 import yaml
 import argparse
-import numpy as np
 
 # Add project root to path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -45,6 +44,129 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def parse_chunk(raw_lines, created_at_timestamp):
+    """Parse a chunk of JSON lines (runs in separate process)."""
+    from arxiv_parser import ArxivIdParser
+    import json
+
+    docs = []
+    errors = 0
+
+    for line in raw_lines:
+        try:
+            paper = json.loads(line)
+            parsed = ArxivIdParser.parse(paper['id'])
+
+            categories_str = paper.get('categories', '')
+            categories = categories_str.split() if categories_str else []
+            primary_category = categories[0] if categories else None
+
+            authors_field = paper.get('authors', '')
+            if isinstance(authors_field, str):
+                authors = [a.strip() for a in authors_field.split(',') if a.strip()]
+            else:
+                authors = authors_field
+
+            metadata_doc = {
+                "_key": parsed.internal_id,
+                "arxiv_id": paper['id'],
+                "authors": authors,
+                "categories": categories,
+                "primary_category": primary_category,
+                "year": parsed.year,
+                "month": parsed.month,
+                "year_month": f"{parsed.year:04d}{parsed.month:02d}",
+                "created_at": created_at_timestamp,
+            }
+
+            abstract_doc = {
+                "_key": parsed.internal_id,
+                "arxiv_id": paper['id'],
+                "title": paper.get('title', '').strip(),
+                "abstract": paper.get('abstract', '').strip(),
+            }
+
+            # Pre-compute combined text for GPU (avoid string concat on GPU)
+            title = paper.get('title', '').strip()
+            abstract = paper.get('abstract', '').strip()
+            combined_text = f"{title}\n\n{abstract}"
+
+            embedding_doc = {
+                "_key": parsed.internal_id,
+                "arxiv_id": paper['id'],
+                "title": title,
+                "abstract": abstract,
+                "combined_text": combined_text,  # Pre-computed for GPU
+            }
+
+            docs.append({
+                "metadata": metadata_doc,
+                "abstract": abstract_doc,
+                "embedding": embedding_doc
+            })
+        except Exception:
+            errors += 1
+
+    return docs, errors
+
+
+def postprocess_worker(
+    worker_id: int,
+    input_queue: mp.Queue,
+    output_queue: mp.Queue,
+    stop_event: Any,
+):
+    """
+    CPU worker process - normalizes embeddings and converts to lists.
+    Runs in parallel with storage to prevent bottleneck.
+    """
+    import numpy as np
+    batches_processed = 0
+
+    try:
+        while not stop_event.is_set():
+            try:
+                batch = input_queue.get(timeout=1.0)
+
+                if batch is None:  # Poison pill
+                    break
+
+                # Process embeddings on CPU: normalize + convert to lists
+                for doc in batch:
+                    emb_doc = doc['embedding']
+
+                    # Normalize embeddings and convert to lists
+                    for key in ['title_embedding', 'abstract_embedding', 'combined_embedding']:
+                        if emb_doc.get(key) is not None:
+                            arr = emb_doc[key]
+                            if isinstance(arr, np.ndarray):
+                                # L2 normalization
+                                norm = np.linalg.norm(arr)
+                                if norm > 0:
+                                    arr = arr / norm
+                                # Convert to list for JSON storage
+                                emb_doc[key] = arr.tolist()
+
+                    # Remove temporary fields used during processing
+                    emb_doc.pop('combined_text', None)
+                    emb_doc.pop('title', None)
+                    emb_doc.pop('abstract', None)
+
+                # Send to storage queue
+                output_queue.put(batch)
+                batches_processed += 1
+
+            except Empty:
+                continue
+            except Exception:
+                logger.exception(f"Postprocess worker {worker_id} error")
+
+    except Exception:
+        logger.exception(f"Postprocess worker {worker_id} failed")
+    finally:
+        print(f"Postprocess worker {worker_id} finished - {batches_processed} batches")
 
 
 def embedding_worker(
@@ -126,46 +248,30 @@ def embedding_worker(
                 combined_only = bool(emb_config.get('combined_only', False))
 
                 if combined_only:
-                    combined = [
-                        f"{doc['abstract'].get('title', '') or ''}\n\n{doc['abstract'].get('abstract', '') or ''}"
-                        for doc in batch
-                    ]
+                    # Use pre-computed combined text from CPU parsing
+                    combined = [doc['embedding'].get('combined_text', '') for doc in batch]
                     combined_embeds = embedder.embed_texts(combined, prompt_name='passage')
-                    # Optional L2 normalization
-                    if emb_config.get('normalize_embeddings', False):
-                        norms = np.linalg.norm(combined_embeds, axis=1, keepdims=True)
-                        norms[norms == 0] = 1.0
-                        combined_embeds = combined_embeds / norms
 
-                    # Attach embeddings (combined only)
+                    # Attach embeddings (keep as numpy, convert to list in storage worker)
                     for i, doc in enumerate(batch):
                         doc['embedding']['title_embedding'] = None
                         doc['embedding']['abstract_embedding'] = None
-                        doc['embedding']['combined_embedding'] = combined_embeds[i].tolist()
+                        doc['embedding']['combined_embedding'] = combined_embeds[i]  # Keep as numpy array
                 else:
-                    titles = [doc['abstract'].get('title', '') or '' for doc in batch]
-                    abstracts = [doc['abstract'].get('abstract', '') or '' for doc in batch]
-                    combined = [
-                        f"{doc['abstract'].get('title', '') or ''}\n\n{doc['abstract'].get('abstract', '') or ''}"
-                        for doc in batch
-                    ]
+                    titles = [doc['embedding'].get('title', '') for doc in batch]
+                    abstracts = [doc['embedding'].get('abstract', '') for doc in batch]
+                    combined = [doc['embedding'].get('combined_text', '') for doc in batch]
 
                     # Use appropriate prompts for Jina v4
                     title_embeds = embedder.embed_texts(titles, prompt_name='query')
                     abstract_embeds = embedder.embed_texts(abstracts, prompt_name='passage')
                     combined_embeds = embedder.embed_texts(combined, prompt_name='passage')
-                    # Optional L2 normalization
-                    if emb_config.get('normalize_embeddings', False):
-                        for arr in (title_embeds, abstract_embeds, combined_embeds):
-                            norms = np.linalg.norm(arr, axis=1, keepdims=True)
-                            norms[norms == 0] = 1.0
-                            arr[:] = arr / norms
 
-                    # Attach embeddings
+                    # Attach embeddings (keep as numpy, normalization done in storage worker)
                     for i, doc in enumerate(batch):
-                        doc['embedding']['title_embedding'] = title_embeds[i].tolist()
-                        doc['embedding']['abstract_embedding'] = abstract_embeds[i].tolist()
-                        doc['embedding']['combined_embedding'] = combined_embeds[i].tolist()
+                        doc['embedding']['title_embedding'] = title_embeds[i]  # Keep as numpy
+                        doc['embedding']['abstract_embedding'] = abstract_embeds[i]  # Keep as numpy
+                        doc['embedding']['combined_embedding'] = combined_embeds[i]  # Keep as numpy
 
                 # Send to output queue
                 output_queue.put(batch)
@@ -176,11 +282,11 @@ def embedding_worker(
 
             except Empty:
                 continue
-            except Exception as e:
-                logger.exception(f"Worker {worker_id} error: {e}")
+            except Exception:
+                logger.exception(f"Worker {worker_id} error")
 
-    except Exception as e:
-        logger.exception(f"Worker {worker_id} initialization failed: {e}")
+    except Exception:
+        logger.exception(f"Worker {worker_id} initialization failed")
     finally:
         print(f"Worker {worker_id} finished - {batches_processed} batches")
 
@@ -212,18 +318,19 @@ def storage_worker(
                     if batch is None:  # Poison pill
                         break
 
-                    # Extract documents for each collection
+                    # Extract documents for each collection (already processed by postprocess workers)
                     metadata_docs = [doc['metadata'] for doc in batch]
                     abstract_docs = [doc['abstract'] for doc in batch]
                     embedding_docs = [doc['embedding'] for doc in batch]
 
                     # Resolve per-collection chunk sizes (NDJSON rows per import)
                     cs = chunk_sizes or {}
-                    papers_chunk = int(cs.get('papers', 1000))
-                    abstracts_chunk = int(cs.get('abstracts', 1000))
-                    embeddings_chunk = int(cs.get('embeddings', 1000))
+                    papers_chunk = int(cs.get('papers', 4000))
+                    abstracts_chunk = int(cs.get('abstracts', 4000))
+                    embeddings_chunk = int(cs.get('embeddings', 750))
 
-                    # Insert into collections with tuned chunk sizes
+                    # Sequential imports to maintain atomicity
+                    # (All 3 must succeed or fail together for data consistency)
                     metadata_count = client.bulk_import(
                         collections_config['papers'], metadata_docs, chunk_size=papers_chunk
                     )
@@ -250,11 +357,11 @@ def storage_worker(
                     if stop_event.is_set() and output_queue.empty():
                         break
                     continue
-                except Exception as e:
-                    logger.exception(f"Storage error: {e}")
+                except Exception:
+                    logger.exception(f"Storage error")
 
-    except Exception as e:
-        logger.exception(f"Storage worker failed: {e}")
+    except Exception:
+        logger.exception(f"Storage worker failed")
     finally:
         print(f"Storage worker finished - {batches_stored} batches stored")
 
@@ -305,8 +412,9 @@ class MultiGPUArxivImporter:
 
         # Multiprocessing setup (spawn context for CUDA)
         ctx = mp.get_context('spawn')
-        self.input_queue = ctx.Queue(maxsize=50)
-        self.output_queue = ctx.Queue(maxsize=50)
+        self.input_queue = ctx.Queue(maxsize=50)  # Main → GPU workers
+        self.postprocess_queue = ctx.Queue(maxsize=50)  # GPU → Postprocess workers
+        self.storage_queue = ctx.Queue(maxsize=50)  # Postprocess → Storage
         self.stop_event = ctx.Event()
 
         # Shared stats (use Manager for cross-process sharing)
@@ -315,8 +423,13 @@ class MultiGPUArxivImporter:
         self.stats_dict['total_created'] = 0
         self.stats_dict['total_errors'] = 0
 
-        self.workers = []
+        self.gpu_workers = []
+        self.postprocess_workers = []
         self.storage_thread = None
+        self.num_postprocess_workers = 8  # 8 CPU workers for post-processing
+
+        # Cache timestamp for all papers (avoid 2.8M datetime calls)
+        self.created_at_timestamp = datetime.now(timezone.utc).isoformat()
 
     def create_database_if_needed(self):
         """Create database via Unix socket if it doesn't exist."""
@@ -438,21 +551,31 @@ class MultiGPUArxivImporter:
             self.num_workers = 1
             assigned_gpu_ids = [0]
 
-        # Start embedding workers
+        # Start GPU embedding workers
         for i, gpu_id in enumerate(assigned_gpu_ids):
             p = ctx.Process(
                 target=embedding_worker,
-                args=(i, gpu_id, self.input_queue, self.output_queue, self.stop_event, self.config, self.multi_gpu)
+                args=(i, gpu_id, self.input_queue, self.postprocess_queue, self.stop_event, self.config, self.multi_gpu)
             )
             p.start()
-            self.workers.append(p)
-            print(f"Started worker {i} on GPU {gpu_id}")
+            self.gpu_workers.append(p)
+            print(f"Started GPU worker {i} on GPU {gpu_id}")
+
+        # Start CPU postprocess workers (8 workers for parallel normalization/conversion)
+        for i in range(self.num_postprocess_workers):
+            p = ctx.Process(
+                target=postprocess_worker,
+                args=(i, self.postprocess_queue, self.storage_queue, self.stop_event)
+            )
+            p.start()
+            self.postprocess_workers.append(p)
+        print(f"Started {self.num_postprocess_workers} postprocess workers")
 
         # Start storage thread
         self.storage_thread = threading.Thread(
             target=storage_worker,
             args=(
-                self.output_queue,
+                self.storage_queue,
                 self.stop_event,
                 self.db_config,
                 self.config['database']['collections'],
@@ -471,40 +594,55 @@ class MultiGPUArxivImporter:
         if limit:
             print(f"Limiting to {limit:,} papers")
 
-        # PHASE 1: Preload and parse all papers into RAM (CPU-bound, single-threaded)
-        print("Phase 1: Preloading and parsing papers into RAM...")
+        # PHASE 1a: Load raw JSON lines into RAM
+        print("Phase 1a: Loading raw JSON into RAM...")
         start_time = time.time()
-        all_docs = []
-        parse_errors = 0
+        raw_papers = []
 
         with open(self.data_file, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
                 if i < skip:
                     continue
-
                 if limit and (i - skip) >= limit:
                     break
+                raw_papers.append(line)
 
-                try:
-                    paper = json.loads(line)
-                    doc = self.process_paper(paper)
-                    if doc:
-                        all_docs.append(doc)
+        elapsed = time.time() - start_time
+        print(f"Phase 1a complete: Loaded {len(raw_papers):,} raw papers in {elapsed:.1f}s")
 
-                    if len(all_docs) % 10000 == 0:
-                        elapsed = time.time() - start_time
-                        rate = len(all_docs) / elapsed if elapsed > 0 else 0
-                        print(f"Parsed {len(all_docs):,} papers ({rate:.1f} papers/sec)")
+        # PHASE 1b: Parse with multiprocessing (36 CPU workers)
+        print("Phase 1b: Parsing papers with 36 CPU workers...")
+        start_time = time.time()
 
-                except Exception as e:
-                    parse_errors += 1
-                    if parse_errors < 10:  # Only show first 10 errors
-                        logger.exception(f"Parse error on line {i}")
-                    continue
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        # Split into chunks for workers (~78k papers per worker)
+        chunk_size = len(raw_papers) // 36 + 1
+        chunks = [raw_papers[i:i + chunk_size] for i in range(0, len(raw_papers), chunk_size)]
+
+        all_docs = []
+        parse_errors = 0
+
+        # Process chunks in parallel
+        with ProcessPoolExecutor(max_workers=36) as executor:
+            # Submit all chunks
+            future_to_chunk = {executor.submit(parse_chunk, chunk, self.created_at_timestamp): i
+                             for i, chunk in enumerate(chunks)}
+
+            # Collect results as they complete
+            for future in as_completed(future_to_chunk):
+                chunk_docs, chunk_errors = future.result()
+                all_docs.extend(chunk_docs)
+                parse_errors += chunk_errors
+
+                # Progress reporting
+                elapsed = time.time() - start_time
+                rate = len(all_docs) / elapsed if elapsed > 0 else 0
+                print(f"Parsed {len(all_docs):,} papers ({rate:.1f} papers/sec, {len(future_to_chunk) - len([f for f in future_to_chunk if f.done()])} chunks remaining)")
 
         elapsed = time.time() - start_time
         rate = len(all_docs) / elapsed if elapsed > 0 else 0
-        print(f"Phase 1 complete: Parsed {len(all_docs):,} papers in {elapsed:.1f}s ({rate:.1f} papers/sec)")
+        print(f"Phase 1b complete: Parsed {len(all_docs):,} papers in {elapsed:.1f}s ({rate:.1f} papers/sec)")
         if parse_errors > 0:
             print(f"Parse errors: {parse_errors:,}")
 
@@ -516,7 +654,7 @@ class MultiGPUArxivImporter:
             batch = all_docs[i:i + self.batch_size]
             self.input_queue.put(batch)
 
-            if (i + self.batch_size) % 10000 == 0:
+            if (i + len(batch)) % 10000 == 0:
                 print(f"Queued {i + len(batch):,} papers")
 
         elapsed = time.time() - start_time
@@ -552,7 +690,7 @@ class MultiGPUArxivImporter:
                 "year": parsed.year,
                 "month": parsed.month,
                 "year_month": f"{parsed.year:04d}{parsed.month:02d}",
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": self.created_at_timestamp,  # Use cached timestamp
             }
 
             abstract_doc = {
@@ -584,17 +722,31 @@ class MultiGPUArxivImporter:
         """Clean shutdown of workers and storage."""
         print("Shutting down workers...")
 
-        # Wait for embedding workers to finish
+        # Wait for GPU workers to finish
         print("Waiting for GPU workers to complete...")
-        for i, p in enumerate(self.workers):
+        for i, p in enumerate(self.gpu_workers):
             p.join(timeout=120)
             if p.is_alive():
-                print(f"Warning: Worker {i} did not exit cleanly, terminating...")
+                print(f"Warning: GPU worker {i} did not exit cleanly, terminating...")
                 p.terminate()
                 p.join(timeout=10)
 
-        # Signal storage thread to stop after draining output queue
-        print("Waiting for storage thread to drain output queue...")
+        # Send poison pills to postprocess workers
+        print("Sending poison pills to postprocess workers...")
+        for _ in range(self.num_postprocess_workers):
+            self.postprocess_queue.put(None)
+
+        # Wait for postprocess workers to finish
+        print("Waiting for postprocess workers to complete...")
+        for i, p in enumerate(self.postprocess_workers):
+            p.join(timeout=60)
+            if p.is_alive():
+                print(f"Warning: Postprocess worker {i} did not exit cleanly, terminating...")
+                p.terminate()
+                p.join(timeout=10)
+
+        # Signal storage thread to stop after draining storage queue
+        print("Waiting for storage thread to drain storage queue...")
         self.stop_event.set()
 
         # Give storage thread time to drain remaining batches
@@ -604,7 +756,7 @@ class MultiGPUArxivImporter:
                 print("Warning: Storage thread did not exit cleanly")
 
         # Report final queue states
-        print(f"Final queue states: input={self.input_queue.qsize()}, output={self.output_queue.qsize()}")
+        print(f"Final queue states: input={self.input_queue.qsize()}, postprocess={self.postprocess_queue.qsize()}, storage={self.storage_queue.qsize()}")
         print("All workers stopped")
 
     def run(self, limit: Optional[int] = None, skip: int = 0, setup_db: bool = True):

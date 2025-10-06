@@ -147,4 +147,10 @@ yarn.lock
 *.crt
 credentials.json
 secrets.yaml
+
+# Large data files
 data/arxiv-kaggle-latest.json
+data/arxiv*.json
+data/*.json.gz
+experiments/arxiv_import/data/*.json
+experiments/arxiv_import/data/*.json.gz
