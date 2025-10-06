@@ -423,9 +423,9 @@ class MultiGPUArxivImporter:
         self.stats_dict['total_created'] = 0
         self.stats_dict['total_errors'] = 0
 
-        self.gpu_workers = []
-        self.postprocess_workers = []
-        self.storage_thread = None
+        self.gpu_workers: list[mp.Process] = []
+        self.postprocess_workers: list[mp.Process] = []
+        self.storage_thread: Optional[threading.Thread] = None
         self.num_postprocess_workers = 8  # 8 CPU workers for post-processing
 
         # Cache timestamp for all papers (avoid 2.8M datetime calls)
