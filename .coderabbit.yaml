@@ -96,6 +96,19 @@ reviews:
         - Validate error handling in example code
         - Check documentation clarity and completeness
 
+    # Backup and snapshot tools
+    - path: "tools/backup/**/*.py"
+      instructions: |
+        - Verify arangodump/arangorestore command construction and error handling
+        - Check snapshot metadata integrity and versioning
+        - Validate retention policy logic (last 10, weekly for 3 months, permanent protection)
+        - Ensure proper cleanup and rollback on failures
+        - Review compression/decompression safety
+        - Validate path handling and directory permissions
+        - Check TCP endpoint usage is documented (issue #5 workaround)
+        - Ensure environment variable handling (ARANGO_PASSWORD)
+        - Validate CLI argument parsing and user confirmations
+
   # Tool integration
   tools:
     shellcheck:
@@ -145,3 +158,9 @@ knowledge_base:
     - "Go proxy timeouts: Default 120s client, 10s dial, configurable via env vars"
     - "Import operations: Use on_duplicate='ignore' for idempotent ingestion"
     - "TreeSitter parsing: Handle grammar loading errors, validate language support"
+    - "Backup strategy: Two-tier system - DR (ZFS snapshots, nightly) + operational (arangodump, on-demand)"
+    - "Operational snapshots: Use TCP endpoint (http://127.0.0.1:8529) due to Go proxy limitation (issue #5)"
+    - "Backup defaults: include_bulk=False (bulk storage is already the archive, no need to back up backup)"
+    - "Snapshot retention: Keep last 10, weekly for 3 months, never delete permanent snapshots"
+    - "DR backups: ZFS snapshot of dbpool/arangodb dataset, instant and space-efficient"
+    - "Backup performance: TCP acceptable for backups (not time-sensitive like inference operations)"
