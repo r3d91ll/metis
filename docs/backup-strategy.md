@@ -244,4 +244,4 @@ du -sh /bulk-store/metis/snapshots/*
 - [Snapshot Manager Quick Reference](../tools/SNAPSHOT_QUICKSTART.md)
 - [Snapshot Manager Full Documentation](../tools/backup/README.md)
 - ZFS Snapshots: `man zfs-snapshot`
-- ArangoDB Backup: https://docs.arangodb.com/stable/operations/backup-and-restore/
+- [ArangoDB Backup](https://docs.arangodb.com/stable/operations/backup-and-restore/)
