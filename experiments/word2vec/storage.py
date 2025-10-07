@@ -134,12 +134,16 @@ class CFExperimentStorage:
             "authors": paper_doc.get("authors", []),
             "abstract": paper_doc.get("abstract", ""),
             "markdown_content": paper_doc.get("markdown_content", ""),
+            "latex_source": paper_doc.get("latex_source"),
             "processing_metadata": {
                 "tool": "docling",
                 "version": "2.54.0",
                 "timestamp": datetime.now().isoformat() + "Z",
                 "word_count": len(paper_doc.get("markdown_content", "").split()),
-                "processing_time_seconds": paper_doc.get("processing_time", 0)
+                "processing_time_seconds": paper_doc.get("processing_time", 0),
+                "has_latex_source": paper_doc.get("latex_source") is not None,
+                "latex_chars": len(paper_doc.get("latex_source", "")),
+                "latex_words": len(paper_doc.get("latex_source", "").split())
             },
             "experiment_tags": ["word2vec_family", "cf_validation"],
             "quality_metrics": {

@@ -72,6 +72,13 @@ def test_phase2():
             logger.info(
                 f"  Word count: {len(paper_doc.markdown_content.split())} words"
             )
+            if paper_doc.latex_source:
+                logger.info(
+                    f"  LaTeX source: {len(paper_doc.latex_source)} chars, "
+                    f"{len(paper_doc.latex_source.split())} words"
+                )
+            else:
+                logger.info("  LaTeX source: Not available")
 
             # Convert PaperDocument to dict for storage
             paper_dict = {
@@ -79,6 +86,7 @@ def test_phase2():
                 "authors": paper_doc.authors,
                 "abstract": paper_doc.abstract,
                 "markdown_content": paper_doc.markdown_content,
+                "latex_source": paper_doc.latex_source,
                 "processing_time": paper_doc.processing_time,
             }
 

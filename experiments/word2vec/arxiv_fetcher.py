@@ -31,6 +31,7 @@ class PaperDocument:
     authors: List[str]
     abstract: str
     markdown_content: str
+    latex_source: Optional[str]
     pdf_path: Path
     metadata: Dict[str, Any]
     processing_time: float
@@ -77,15 +78,16 @@ class ArxivPaperFetcher:
         self.max_retries = max_retries
         self.client = arxiv.Client()
 
-    def fetch_paper(self, arxiv_id: str) -> PaperDocument:
+    def fetch_paper(self, arxiv_id: str, fetch_latex: bool = True) -> PaperDocument:
         """
         Download paper from arXiv and convert to markdown.
 
         Args:
             arxiv_id: arXiv identifier (e.g., "1301.3781")
+            fetch_latex: Whether to fetch LaTeX source (default: True)
 
         Returns:
-            PaperDocument with markdown content and metadata
+            PaperDocument with markdown content, LaTeX source, and metadata
 
         Raises:
             ArxivError: If download fails after retries
@@ -95,6 +97,7 @@ class ArxivPaperFetcher:
 
         # Check cache first
         pdf_path = self.cache_dir / f"{arxiv_id.replace('.', '_')}.pdf"
+        latex_path = self.cache_dir / f"{arxiv_id.replace('.', '_')}_source.tar.gz"
 
         if not pdf_path.exists():
             logger.info(f"Downloading paper {arxiv_id} from arXiv...")
@@ -102,6 +105,16 @@ class ArxivPaperFetcher:
         else:
             logger.info(f"Using cached PDF for {arxiv_id}")
             paper_metadata = self._get_metadata(arxiv_id)
+
+        # Download LaTeX source if requested
+        latex_content = None
+        if fetch_latex:
+            if not latex_path.exists():
+                logger.info(f"Downloading LaTeX source for {arxiv_id}...")
+                latex_content = self._download_latex_source(arxiv_id, latex_path)
+            else:
+                logger.info(f"Using cached LaTeX source for {arxiv_id}")
+                latex_content = self._extract_latex_from_cache(latex_path)
 
         # Convert PDF to markdown
         logger.info(f"Converting PDF to markdown for {arxiv_id}...")
@@ -115,11 +128,13 @@ class ArxivPaperFetcher:
             authors=paper_metadata["authors"],
             abstract=paper_metadata["abstract"],
             markdown_content=markdown_result["markdown"],
+            latex_source=latex_content,
             pdf_path=pdf_path,
             metadata={
                 **paper_metadata,
                 "extraction_metadata": markdown_result.get("metadata", {}),
                 "word_count": len(markdown_result["markdown"].split()),
+                "has_latex_source": latex_content is not None,
                 "processing_seconds": processing_time
             },
             processing_time=processing_time
@@ -257,6 +272,82 @@ class ArxivPaperFetcher:
 
         except Exception as e:
             raise RuntimeError(f"Failed to extract markdown from {pdf_path}: {e}")
+
+    def _download_latex_source(self, arxiv_id: str, latex_path: Path) -> Optional[str]:
+        """
+        Download LaTeX source from arXiv.
+
+        Args:
+            arxiv_id: arXiv identifier
+            latex_path: Path to save source tarball
+
+        Returns:
+            Concatenated LaTeX content or None if unavailable
+        """
+        try:
+            search = arxiv.Search(id_list=[arxiv_id])
+            result = next(self.client.results(search))
+
+            # Download source to cache
+            result.download_source(dirpath=str(latex_path.parent), filename=latex_path.name)
+
+            # Extract and concatenate LaTeX files
+            return self._extract_latex_from_cache(latex_path)
+
+        except Exception as e:
+            logger.warning(f"Could not download LaTeX source for {arxiv_id}: {e}")
+            return None
+
+    def _extract_latex_from_cache(self, latex_path: Path) -> Optional[str]:
+        """
+        Extract LaTeX content from cached tarball.
+
+        Args:
+            latex_path: Path to source tarball
+
+        Returns:
+            Concatenated LaTeX content or None if extraction fails
+        """
+        import tarfile
+        import tempfile
+
+        try:
+            # Extract tarball to temp directory
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with tarfile.open(latex_path, 'r:gz') as tar:
+                    tar.extractall(tmpdir)
+
+                # Find and read all .tex files
+                tmpdir_path = Path(tmpdir)
+                tex_files = list(tmpdir_path.rglob("*.tex"))
+
+                if not tex_files:
+                    logger.warning(f"No .tex files found in {latex_path}")
+                    return None
+
+                # Concatenate all .tex files
+                latex_content = []
+                for tex_file in sorted(tex_files):
+                    try:
+                        with open(tex_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                            latex_content.append(f"% File: {tex_file.name}\n{content}")
+                    except Exception as e:
+                        logger.warning(f"Could not read {tex_file}: {e}")
+
+                if not latex_content:
+                    return None
+
+                combined = "\n\n".join(latex_content)
+                logger.info(
+                    f"Extracted {len(tex_files)} LaTeX files "
+                    f"({len(combined)} chars, {len(combined.split())} words)"
+                )
+                return combined
+
+        except Exception as e:
+            logger.warning(f"Could not extract LaTeX from {latex_path}: {e}")
+            return None
 
     def close(self):
         """Close the fetcher (cleanup if needed)."""
