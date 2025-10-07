@@ -24,6 +24,19 @@ class JinaV4TransformersEmbedder(EmbedderBase):
     DEFAULT_MODEL = "jinaai/jina-embeddings-v4"
 
     def __init__(self, config: Optional[EmbeddingConfig] = None) -> None:
+        """
+        Initialize the embedder, load the Jina v4 transformer model, and configure device and embedding dimension.
+        
+        Parameters:
+            config (Optional[EmbeddingConfig]): Optional configuration object. If provided, the following fields are honored:
+                - model_name: used to select the pretrained model; names ending with "-transformers" are normalized to "jinaai/jina-embeddings-v4".
+                - device: overrides automatic device selection; if omitted, uses "cuda" when available, otherwise "cpu".
+                - local_files_only: when True, restricts model loading to local files.
+        
+        Notes:
+            - Loads the model via AutoModel.from_pretrained(..., trust_remote_code=True) and moves it to the selected device.
+            - Sets self.model to the loaded model, self.device to the chosen device string, and self._dim to 2048.
+        """
         super().__init__(config)
 
         # Normalize model name: allow hints like "...-transformers" but load the actual repo
@@ -66,16 +79,32 @@ class JinaV4TransformersEmbedder(EmbedderBase):
 
     @property
     def embedding_dim(self) -> int:
+        """
+        Return the embedder's output vector dimensionality.
+        
+        Returns:
+            dim (int): Number of elements in each embedding vector.
+        """
         return self._dim
 
     @property
     def embedding_dimension(self) -> int:
-        """Required by EmbedderBase."""
+        """
+        Compatibility alias for the embedder's embedding dimension.
+        
+        Returns:
+            embedding_dimension (int): The size of the output embeddings (number of dimensions).
+        """
         return self._dim
 
     @property
     def max_sequence_length(self) -> int:
-        """Required by EmbedderBase."""
+        """
+        The maximum sequence length accepted by the embedder.
+        
+        Returns:
+            int: Maximum number of tokens for input sequences; uses `config.max_seq_length` if set, otherwise 8192.
+        """
         return getattr(self.config, "max_seq_length", 8192)
 
     def embed_texts(
@@ -85,6 +114,20 @@ class JinaV4TransformersEmbedder(EmbedderBase):
         batch_size: Optional[int] = None,
         prompt_name: Optional[str] = None,
     ) -> np.ndarray:
+        """
+        Compute embeddings for a list of texts using the loaded Jina v4 transformers model.
+        
+        The method resolves batch size from the argument, configuration, or defaults to 32, and forwards the task and prompt name to the model's encode_text API. If `texts` is empty, returns an empty float32 array with shape (0, embedding_dim).
+        
+        Parameters:
+        	texts (List[str]): Input texts to embed.
+        	task (str): Semantic task to guide encoding (defaults to "retrieval").
+        	batch_size (Optional[int]): Number of texts processed per batch; if None, uses config.batch_size or 32.
+        	prompt_name (Optional[str]): Prompt slot name to use with the model (defaults to "query").
+        
+        Returns:
+        	np.ndarray: Float32 array of shape (len(texts), self._dim) containing the embeddings. 
+        """
         if not texts:
             return np.empty((0, self._dim), dtype=np.float32)
 
@@ -113,5 +156,13 @@ class JinaV4TransformersEmbedder(EmbedderBase):
         return arr.astype(np.float32, copy=False)
 
     def embed_single(self, text: str, task: str = "retrieval") -> np.ndarray:
-        """Embed a single text."""
+        """
+        Produce an embedding vector for a single text.
+        
+        Parameters:
+            task (str): The embedding task to perform (e.g., "retrieval"). Defaults to "retrieval".
+        
+        Returns:
+            np.ndarray: 1-D float32 NumPy array of length 2048 containing the embedding for the input text.
+        """
         return self.embed_texts([text], task=task)[0]

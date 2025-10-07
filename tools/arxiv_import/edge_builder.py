@@ -51,7 +51,14 @@ class EdgeBuilder:
     """
 
     def __init__(self, config_path: Path):
-        """Initialize edge builder with configuration."""
+        """
+        Create an EdgeBuilder configured from the YAML file at config_path.
+        
+        Loads the YAML configuration, resolves the database client configuration (including Unix socket and database name), and stores collection names and edge-related settings on the instance for later use.
+        
+        Parameters:
+            config_path (Path): Path to the YAML configuration file used to initialize the builder.
+        """
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
@@ -100,17 +107,16 @@ class EdgeBuilder:
         min_shared: int = 2
     ) -> List[Dict[str, Any]]:
         """
-        Build category co-occurrence edges.
-
-        Creates edges between papers sharing ≥min_shared categories.
-        Captures multi-disciplinary positioning and bridge papers.
-
-        Args:
-            papers: List of paper metadata
-            min_shared: Minimum number of shared categories
-
+        Constructs undirected category co-occurrence edges between papers.
+        
+        Builds one edge for each unordered pair of papers that share at least `min_shared` categories. Each edge document references the embeddings collection for both papers and includes the overlap weight and the list of shared categories.
+        
+        Parameters:
+            papers (List[Dict[str, Any]]): Paper metadata objects containing at minimum `_key` and `categories`.
+            min_shared (int): Minimum number of shared categories required to create an edge.
+        
         Returns:
-            List of edge documents ready for insertion
+            List[Dict[str, Any]]: Edge documents with fields `_from`, `_to`, `type` (set to `'category_overlap'`), `weight` (number of shared categories), and `shared_categories` (list of shared category identifiers).
         """
         logger.info(f"Building category links (min_shared={min_shared})...")
 
@@ -188,20 +194,17 @@ class EdgeBuilder:
         decay_alpha: float = 0.3
     ) -> List[Dict[str, Any]]:
         """
-        Build temporal succession edges.
-
-        Creates directional edges from earlier papers to later papers
-        within the same primary_category and time window.
-
-        Args:
-            papers: List of paper metadata
-            min_months: Minimum time gap (months)
-            max_months: Maximum time gap (months)
-            max_edges_per_paper: Cap on outgoing edges per paper
-            decay_alpha: Exponential decay rate for edge weights
-
+        Builds directed temporal succession edges between papers within the same primary category.
+        
+        Parameters:
+            papers (List[Dict[str, Any]]): Paper metadata containing at minimum '_key', 'primary_category', and 'year_month'.
+            min_months (int): Minimum month difference required to create an edge.
+            max_months (int): Maximum month difference allowed to create an edge.
+            max_edges_per_paper (int): Maximum number of outgoing temporal edges to create per source paper.
+            decay_alpha (float): Exponential decay rate used to compute edge weight from month difference.
+        
         Returns:
-            List of edge documents ready for insertion
+            List[Dict[str, Any]]: Edge documents ready for insertion, each containing '_from', '_to', 'type', 'weight', and 'months_diff'.
         """
         logger.info(f"Building temporal succession edges (window={min_months}-{max_months} months)...")
 
@@ -298,7 +301,11 @@ class EdgeBuilder:
         return (y2 - y1) * 12 + (m2 - m1)
 
     def create_edge_collections(self, client: ArangoClient) -> None:
-        """Create edge collections if they don't exist."""
+        """
+        Ensure the edge collections for category_links and temporal_succession exist and have a persistent index on the `type` field.
+        
+        Creates two edge collections (names taken from the instance's collection mapping) with a minimal persistent index on `type`, logs creation outcomes, and catches/logs any exceptions encountered during creation.
+        """
         logger.info("Creating edge collections...")
 
         # Define edge collections with minimal indexes
@@ -335,16 +342,15 @@ class EdgeBuilder:
         batch_size: int = 10000
     ) -> int:
         """
-        Insert edges into collection in batches.
-
-        Args:
-            client: ArangoDB client
-            collection: Edge collection name
-            edges: List of edge documents
-            batch_size: Batch size for bulk import
-
+        Bulk-insert edge documents into the specified ArangoDB edge collection in batches.
+        
+        Parameters:
+            collection (str): Name of the target edge collection.
+            edges (List[Dict[str, Any]]): Sequence of edge documents prepared for insertion (each must contain `_from` and `_to`).
+            batch_size (int): Number of documents to import per batch; defaults to 10000.
+        
         Returns:
-            Total number of edges inserted
+            int: Total number of edges successfully inserted.
         """
         if not edges:
             logger.warning(f"No edges to insert into {collection}")
@@ -367,13 +373,13 @@ class EdgeBuilder:
 
     def run(self, dry_run: bool = False) -> Dict[str, int]:
         """
-        Run complete edge building pipeline.
-
-        Args:
-            dry_run: If True, count edges but don't insert
-
+        Execute the full edge construction pipeline for the configured corpus and optionally persist generated edges.
+        
+        Parameters:
+            dry_run (bool): If True, build and count edges but do not create collections or insert edges into the database.
+        
         Returns:
-            Statistics dictionary with edge counts
+            stats (Dict[str, int]): Mapping with keys 'category_links', 'temporal_succession', and 'total' containing the number of edges produced for each type and the aggregate total.
         """
         stats = {
             'category_links': 0,
@@ -437,6 +443,11 @@ class EdgeBuilder:
 
 
 def main():
+    """
+    Parse command-line arguments, run the EdgeBuilder pipeline, and exit with a status reflecting whether any edges were created.
+    
+    This function accepts command-line options for the configuration file path and a dry-run flag, instantiates an EdgeBuilder with the provided config, executes the run process, and terminates the program with exit code 0 when edges were created or 1 when no edges were produced.
+    """
     parser = argparse.ArgumentParser(description='Build graph edges for arXiv corpus')
     parser.add_argument(
         '--config',

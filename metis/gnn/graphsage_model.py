@@ -61,6 +61,23 @@ class MultiRelationalGraphSAGE(nn.Module):
         dropout: float = 0.3,
         edge_types: Optional[List[str]] = None,
     ):
+        """
+        Initialize a MultiRelationalGraphSAGE model configured for multiple relation (edge) types.
+        
+        Creates per-edge-type GraphSAGE layer stacks, a learnable attention vector for weighting edge-type embeddings, and a linear fallback projection for use when no edges are present.
+        
+        Parameters:
+            in_channels (int): Dimensionality of input node features.
+            hidden_channels (int): Hidden dimensionality used in intermediate GraphSAGE layers.
+            out_channels (int): Output embedding dimensionality.
+            num_layers (int): Number of GraphSAGE layers to stack per edge type (must be >= 2 to include distinct first and final layers).
+            dropout (float): Dropout probability applied between GraphSAGE layers during training.
+            edge_types (Optional[List[str]]): Ordered list of edge-type names to create separate per-type convolution stacks for.
+                If None, a default set of edge types is used: ["imports", "contains", "references", "cites", "authored_by", "part_of"].
+        
+        Raises:
+            ImportError: If PyTorch Geometric is not available; instructs to install the package with the "gnn" extras.
+        """
         super().__init__()
 
         if not TORCH_GEOMETRIC_AVAILABLE:
@@ -112,7 +129,11 @@ class MultiRelationalGraphSAGE(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        """Initialize model parameters."""
+        """
+        Reset learnable parameters to their initial states.
+        
+        Reinitializes all per-edge-type SAGEConv layers, sets the edge-type attention weights to ones, and resets the fallback projection's parameters.
+        """
         for edge_type in self.edge_types:
             for conv in self.convs[edge_type]:
                 conv.reset_parameters()
@@ -126,14 +147,14 @@ class MultiRelationalGraphSAGE(nn.Module):
         edge_index_dict: Dict[str, Tensor],
     ) -> Tensor:
         """
-        Forward pass through multi-relational GraphSAGE.
-
-        Args:
-            x: Node features [num_nodes, in_channels]
-            edge_index_dict: Dict mapping edge_type → edge_index [2, num_edges]
-
+        Compute node embeddings by aggregating per-edge-type GraphSAGE outputs and combining them with learned edge-type weights.
+        
+        Parameters:
+            x (Tensor): Node feature matrix of shape [num_nodes, in_channels].
+            edge_index_dict (Dict[str, Tensor]): Mapping from edge type name to edge index tensor of shape [2, num_edges].
+        
         Returns:
-            Node embeddings [num_nodes, out_channels]
+            Tensor: L2-normalized node embeddings of shape [num_nodes, out_channels]. If no edge types are present in edge_index_dict, returns the L2-normalized result of the fallback linear projection.
         """
 
         # Aggregate embeddings from each edge type
@@ -178,24 +199,26 @@ class MultiRelationalGraphSAGE(nn.Module):
         edge_index_dict: Dict[str, Tensor],
     ) -> Tensor:
         """
-        Generate embeddings for NEW nodes inductively.
-
-        This is the key capability for dynamic experiential memory:
-        - New observations/reflections added continuously
-        - No retraining needed
-
-        Args:
-            x_new: Features for new nodes [num_new_nodes, in_channels]
-            edge_index_dict: Edge indices including connections to new nodes
-
+        Compute embeddings for new nodes using the trained model without updating its parameters.
+        
+        Parameters:
+            x_new (Tensor): Feature matrix for new nodes with shape [num_new_nodes, in_channels].
+            edge_index_dict (Dict[str, Tensor]): Mapping from edge type to edge index tensor describing edges that involve the new nodes.
+        
         Returns:
-            Embeddings for new nodes [num_new_nodes, out_channels]
+            Tensor: Embeddings for the new nodes with shape [num_new_nodes, out_channels].
         """
         self.eval()
         with torch.no_grad():
             return self.forward(x_new, edge_index_dict)
 
     def __repr__(self) -> str:
+        """
+        Provide a concise string representation of the model including key hyperparameters.
+        
+        Returns:
+            A string containing the class name and the values of `in_channels`, `hidden_channels`, `out_channels`, `num_layers`, and `edge_types`.
+        """
         return (
             f"{self.__class__.__name__}("
             f"in_channels={self.in_channels}, "

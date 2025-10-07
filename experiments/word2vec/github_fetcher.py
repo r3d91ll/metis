@@ -25,6 +25,15 @@ class CodeDocument:
         code_files: Optional[Dict[str, str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
+        """
+        Initialize a CodeDocument representing a repository's code and associated metadata.
+        
+        Parameters:
+            github_url (str): URL of the GitHub repository.
+            is_official (bool): Whether the repository is considered an official implementation (defaults to False).
+            code_files (Optional[Dict[str, str]]): Mapping from file path to file content; defaults to an empty dict.
+            metadata (Optional[Dict[str, Any]]): Arbitrary repository metadata (stars, forks, description, topics, etc.); defaults to an empty dict.
+        """
         self.github_url = github_url
         self.is_official = is_official
         self.code_files = code_files or {}
@@ -32,7 +41,12 @@ class CodeDocument:
 
     @property
     def total_lines(self) -> int:
-        """Calculate total lines of code."""
+        """
+        Return the total number of lines across all stored code files.
+        
+        Returns:
+            total_lines (int): Total number of lines summed from each file in `self.code_files`.
+        """
         return sum(len(content.splitlines()) for content in self.code_files.values())
 
 
@@ -48,11 +62,11 @@ class GitHubCodeFetcher:
 
     def __init__(self, config: Dict[str, Any], github_token: Optional[str] = None):
         """
-        Initialize GitHub code fetcher.
-
-        Args:
-            config: Configuration dictionary
-            github_token: GitHub personal access token (or from GITHUB_TOKEN env)
+        Create a GitHubCodeFetcher configured to locate and retrieve code from GitHub repositories.
+        
+        Parameters:
+            config (Dict[str, Any]): Top-level configuration dictionary; expects fetching.code and fetching.github sections to control file filtering and search behavior.
+            github_token (Optional[str]): Personal access token to authenticate GitHub API requests; if omitted the GITHUB_TOKEN environment variable will be used when available.
         """
         self.config = config
         code_config = config.get("fetching", {}).get("code", {})
@@ -82,13 +96,15 @@ class GitHubCodeFetcher:
 
     def should_include_file(self, file_path: str) -> bool:
         """
-        Check if file should be included based on filtering rules.
-
-        Args:
-            file_path: File path to check
-
+        Determine whether a file path passes the fetcher's include and exclude filters.
+        
+        Checks that the file's extension is one of the configured include_extensions and that none of the configured exclude_patterns appear in the file path (case-insensitive).
+        
+        Parameters:
+            file_path (str): Repository file path to evaluate.
+        
         Returns:
-            True if file should be included
+            bool: `True` if the extension matches include_extensions and no exclude_patterns are present in the path, `False` otherwise.
         """
         file_path_lower = file_path.lower()
 
@@ -108,15 +124,17 @@ class GitHubCodeFetcher:
         self, paper_title: str, authors: List[str], arxiv_id: str
     ) -> Optional[str]:
         """
-        Find official repository for a paper using multiple strategies.
-
-        Args:
-            paper_title: Paper title
-            authors: List of author names
-            arxiv_id: arXiv identifier (e.g., "1301.3781")
-
+        Locate an official GitHub repository URL for a paper using the fetcher's configured search strategies.
+        
+        Attempts each configured strategy in order and returns the first repository URL that matches the heuristic checks.
+        
+        Parameters:
+            paper_title (str): Full title of the paper.
+            authors (List[str]): Ordered list of author names (e.g., ["First Last", ...]).
+            arxiv_id (str): arXiv identifier (e.g., "1301.3781" or "arXiv:1301.3781").
+        
         Returns:
-            Repository URL if found, None otherwise
+            repo_url (Optional[str]): Repository URL if a likely official repository is found, `None` otherwise.
         """
         logger.info(f"Searching for official repository for {arxiv_id}")
 
@@ -140,7 +158,16 @@ class GitHubCodeFetcher:
         return None
 
     def _search_by_arxiv_id(self, arxiv_id: str, paper_title: str) -> Optional[str]:
-        """Search for repositories mentioning the arXiv ID."""
+        """
+        Locate a GitHub repository whose README mentions the given arXiv identifier.
+        
+        Parameters:
+            arxiv_id (str): The arXiv identifier to search for in repository READMEs.
+            paper_title (str): The paper's title used to help assess whether a candidate repository is likely official.
+        
+        Returns:
+            repo_url (Optional[str]): The repository's HTML URL if a likely official repository is found, `None` otherwise.
+        """
         try:
             # Search for arXiv ID in README
             query = f"{arxiv_id} in:readme"
@@ -162,7 +189,16 @@ class GitHubCodeFetcher:
         return None
 
     def _search_by_author(self, authors: List[str], paper_title: str) -> Optional[str]:
-        """Search for repositories by author name."""
+        """
+        Locate a likely official GitHub repository by searching README content for the first author's last name and the first word of the paper title.
+        
+        Parameters:
+            authors (List[str]): List of author names; the last name of the first author is used as the search term.
+            paper_title (str): Paper title; the first word is combined with the author term to form the search query (search is limited to README content).
+        
+        Returns:
+            Optional[str]: Repository HTML URL if a likely official repository is found, `None` otherwise.
+        """
         if not authors:
             return None
 
@@ -187,7 +223,15 @@ class GitHubCodeFetcher:
         return None
 
     def _search_by_title(self, paper_title: str) -> Optional[str]:
-        """Search for repositories by paper title."""
+        """
+        Locate a likely official GitHub repository by searching repository READMEs for the paper title.
+        
+        Parameters:
+            paper_title (str): The paper title used as the search query.
+        
+        Returns:
+            Optional[str]: The repository URL if a likely official repository is found, `None` otherwise.
+        """
         try:
             # Extract key terms from title (first 3 words)
             key_terms = " ".join(paper_title.split()[:3])
@@ -210,14 +254,12 @@ class GitHubCodeFetcher:
 
     def _is_likely_official(self, repo: Repository, paper_title: str) -> bool:
         """
-        Heuristic to determine if repository is likely official.
-
-        Args:
-            repo: GitHub repository object
-            paper_title: Paper title
-
+        Determine whether a GitHub repository is likely the official code for a paper.
+        
+        Checks for overlap between paper title terms and repository name/description and enforces a minimum stargazer count threshold.
+        
         Returns:
-            True if repository looks official
+            True if the repository is likely official for the paper, False otherwise.
         """
         # Check if paper title terms appear in repo name or description
         title_terms = set(paper_title.lower().split())
@@ -239,14 +281,15 @@ class GitHubCodeFetcher:
         self, repo_url: str, is_official: bool = True
     ) -> Optional[CodeDocument]:
         """
-        Fetch code files from a GitHub repository.
-
-        Args:
-            repo_url: GitHub repository URL
-            is_official: Whether this is the official repository
-
+        Retrieve code files and repository metadata from a GitHub repository URL.
+        
+        Parameters:
+            repo_url (str): URL of the GitHub repository to fetch.
+            is_official (bool): Whether to mark the resulting document as the official repository.
+        
         Returns:
-            CodeDocument with filtered code files, or None on error
+            CodeDocument: Contains the repository URL, the `is_official` flag, a mapping of filtered file paths to their UTF-8 decoded contents, and collected metadata (stars, forks, description, language, topics).
+            None: If fetching fails or no code files matching inclusion criteria are found.
         """
         logger.info(f"Fetching code from {repo_url}")
 
@@ -300,15 +343,19 @@ class GitHubCodeFetcher:
         self, repo: Repository, contents: List, prefix: str = ""
     ) -> Dict[str, str]:
         """
-        Recursively extract code files from repository.
-
-        Args:
-            repo: GitHub repository object
-            contents: List of content files
-            prefix: Path prefix for nested files
-
+        Collect and return code file contents from a repository tree.
+        
+        Traverses the provided contents recursively, includes files that pass should_include_file,
+        enforces max_file_size and max_files limits, decodes file contents as UTF-8, and skips
+        entries that cannot be fetched or decoded.
+        
+        Parameters:
+            repo: GitHub repository object used to retrieve nested directory contents.
+            contents: Iterable of GitHub content items (files or directories) to process.
+            prefix: Optional path prefix for nested files to build repository-relative paths.
+        
         Returns:
-            Dictionary mapping file paths to contents
+            Dict[str, str]: Mapping from repository-relative file paths to decoded UTF-8 file contents.
         """
         code_files = {}
 
@@ -362,6 +409,10 @@ class GitHubCodeFetcher:
         return code_files
 
     def close(self):
-        """Close GitHub API connection."""
+        """
+        No-op placeholder for closing resources tied to the GitHub client.
+        
+        The GitHub API client used by this class does not require explicit closure, so this method performs no action.
+        """
         # GitHub API client doesn't require explicit closing
         pass

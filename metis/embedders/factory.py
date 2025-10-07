@@ -89,13 +89,13 @@ class EmbedderFactory:
     @classmethod
     def _determine_embedder_type(cls, model_name: str) -> str:
         """
-        Determine embedder type from model name.
-
-        Args:
-            model_name: Model name or path
-
+        Infer which embedder implementation to use based on the provided model name.
+        
+        Parameters:
+            model_name (str): Model name or path; if the lowercased value contains the substring "transformers", the transformers-backed embedder is selected.
+        
         Returns:
-            Embedder type string
+            str: The embedder type identifier: "jina-transformers" when model_name indicates a transformers backend, otherwise "jina".
         """
         # Prefer transformers-backed Jina embedder when requested via model name hint.
         # Accept markers like "-transformers" to select the direct HF transformers backend.
@@ -113,10 +113,12 @@ class EmbedderFactory:
     @classmethod
     def _auto_register(cls, embedder_type: str):
         """
-        Attempt to auto-register an embedder type.
-
-        Args:
-            embedder_type: Type of embedder to register
+        Dynamically import and register the embedder class for the given embedder type.
+        
+        If the type is recognized (for example, "jina" or "jina-transformers"), imports the corresponding module and registers its embedder class in the factory registry. If the type is unrecognized, a warning is logged. If the import fails, an error is logged.
+        
+        Parameters:
+            embedder_type (str): The name of the embedder type to auto-register (e.g., "jina", "jina-transformers").
         """
         try:
             if embedder_type == "jina":

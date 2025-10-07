@@ -25,7 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def test_context_builder():
-    """Test context building for Word2Vec papers."""
+    """
+    Builds combined contexts for the configured Word2Vec papers and logs diagnostic summaries.
+    
+    Loads configuration from a nearby config.yaml, retrieves paper and code documents from CFExperimentStorage, and uses CombinedContextBuilder (with LaTeX included) to construct unified contexts. For each paper it logs title, size and token estimates, component breakdown, metadata, and a content preview, then collects per-paper results and emits an overall summary. Storage is closed in all cases.
+    
+    Returns:
+    	bool: `True` if at least one context was built and none were truncated, `False` otherwise.
+    """
     # Load configuration
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path) as f:

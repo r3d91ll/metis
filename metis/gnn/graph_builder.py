@@ -42,10 +42,13 @@ class GraphBuilder:
 
     def __init__(self, client: ArangoClient):
         """
-        Initialize graph builder.
-
-        Args:
-            client: ArangoDB client for read-only access
+        Create a GraphBuilder bound to the given ArangoDB client.
+        
+        Parameters:
+            client (ArangoClient): Read-only ArangoDB client used to query node and edge collections.
+        
+        Raises:
+            ImportError: If PyTorch Geometric is not installed.
         """
         if not TORCH_GEOMETRIC_AVAILABLE:
             raise ImportError(
@@ -61,16 +64,16 @@ class GraphBuilder:
         edge_types: Optional[List[str]] = None,
     ) -> Tuple[Data, Dict[int, str]]:
         """
-        Build PyG Data object from ArangoDB collections.
-
-        Args:
-            include_collections: Node collections to include (default: ["repo_docs"])
-            edge_types: Edge types to include (default: all available)
-
+        Assemble a PyTorch Geometric Data object from ArangoDB node and edge collections.
+        
+        Parameters:
+            include_collections (Optional[List[str]]): Node collections to include; defaults to ["repo_docs"] when not provided.
+            edge_types (Optional[List[str]]): Edge collection types to include; defaults to all available edge types when not provided.
+        
         Returns:
-            (data, node_id_map) where:
-            - data: PyG Data object
-            - node_id_map: Mapping from node index → ArangoDB _id
+            Tuple[Data, Dict[int, str]]: 
+                - data: PyG Data object with fields `x` (node feature tensor), `node_metadata` (list of per-node metadata dicts), `edge_index_dict` (mapping edge type -> edge index tensor), and `edge_attr_dict` (mapping edge type -> edge attribute tensor).
+                - node_id_map: Mapping from local node index to the corresponding ArangoDB document _id.
         """
         include_collections = include_collections or ["repo_docs"]
 
@@ -102,12 +105,19 @@ class GraphBuilder:
         collections: List[str],
     ) -> Tuple[Dict, Dict[int, str]]:
         """
-        Extract nodes from ArangoDB collections.
-
+        Load node embeddings and metadata from the specified ArangoDB collections.
+        
+        Parameters:
+            collections (List[str]): Names of ArangoDB document collections to scan for documents containing an embedding.
+        
         Returns:
-            (nodes_dict, node_id_map) where:
-            - nodes_dict: {"features": Tensor, "metadata": List[dict]}
-            - node_id_map: {node_idx: arango_id}
+            nodes_dict (Dict): Dictionary with:
+                - "features": torch.FloatTensor of shape [num_nodes, 2048] containing node embeddings.
+                - "metadata": List[dict] where each dict contains keys `arango_id`, `key`, `path`, `arxiv_id`, and `collection`.
+            node_id_map (Dict[int, str]): Mapping from local node index to the ArangoDB document `_id`.
+        
+        Raises:
+            ValueError: If no documents with a valid 2048-dimensional embedding are found.
         """
         features_list = []
         metadata_list = []
@@ -174,16 +184,18 @@ class GraphBuilder:
         edge_types: Optional[List[str]] = None,
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
-        Extract edges from edge collections.
-
-        Args:
-            node_id_map: Mapping from node_idx → arango_id
-            edge_types: Edge collection names to query (None = try common names)
-
+        Build per-edge-type PyG edge index and edge attribute tensors from ArangoDB edge collections.
+        
+        Queries the specified edge collections (or a set of common defaults) and groups edges by their reported `type`. Edges whose endpoints are not present in `node_id_map` are skipped. Each returned edge attribute is the edge's `weight` (defaults to 1.0 when missing).
+        
+        Parameters:
+            node_id_map (Dict[int, str]): Mapping from local node index to ArangoDB document _id.
+            edge_types (Optional[List[str]]): Edge collection names to query; if None, common edge collection names are attempted.
+        
         Returns:
-            (edge_index_dict, edge_attr_dict) where:
-            - edge_index_dict: {edge_type: [2, num_edges]}
-            - edge_attr_dict: {edge_type: [num_edges, feat_dim]}
+            Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+                - edge_index_dict: mapping edge_type -> tensor of shape [2, num_edges] containing source and target node indices.
+                - edge_attr_dict: mapping edge_type -> tensor of shape [num_edges, 1] containing edge weights as float32.
         """
         # Reverse map: arango_id → node_idx
         id_to_idx = {aid: idx for idx, aid in node_id_map.items()}
@@ -303,17 +315,16 @@ class GraphBuilder:
         seed: int = 42,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Create inductive train/validation split.
-
-        For inductive learning, validation nodes should be "unseen" during training.
-
-        Args:
-            num_nodes: Total number of nodes
-            val_ratio: Fraction of nodes for validation
-            seed: Random seed
-
+        Create an inductive train/validation split by selecting a subset of node indices for validation.
+        
+        Parameters:
+        	num_nodes (int): Total number of nodes to split.
+        	val_ratio (float): Fraction of nodes assigned to validation (between 0 and 1).
+        	seed (int): Random seed for reproducible shuffling.
+        
         Returns:
-            (train_mask, val_mask) boolean arrays
+        	train_mask (np.ndarray): Boolean array of length `num_nodes` with `True` for training nodes.
+        	val_mask (np.ndarray): Boolean array of length `num_nodes` with `True` for validation nodes.
         """
         np.random.seed(seed)
 

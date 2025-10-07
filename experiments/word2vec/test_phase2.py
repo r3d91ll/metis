@@ -26,7 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 def test_phase2():
-    """Test Phase 2: Paper + Code Fetching."""
+    """
+    Run the end-to-end Phase 2 workflow: fetch an arXiv paper and its GitHub code, store and verify them, archive any available source files, and emit collection statistics.
+    
+    Ensures storage and fetcher resources are closed on completion or failure.
+    
+    Returns:
+        bool: `True` if all steps (fetch, store, retrieve, and optional archive) completed successfully, `False` otherwise.
+    """
     # Load configuration
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path) as f:

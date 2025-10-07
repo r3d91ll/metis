@@ -55,11 +55,11 @@ class SelfSupervisedDataGenerator:
 
     def __init__(self, data, seed: int = 42):
         """
-        Initialize data generator.
-
-        Args:
-            data: PyG Data object with graph
-            seed: Random seed
+        Initialize the data generator, RNG, and an undirected adjacency index from a PyG Data object.
+        
+        Parameters:
+            data: PyG `Data` object containing node features (`x`) and graph edge indices used to build the adjacency index.
+            seed (int): Seed for the internal random number generator.
         """
         self.data = data
         self.num_nodes = data.x.shape[0]
@@ -71,7 +71,12 @@ class SelfSupervisedDataGenerator:
         logger.info(f"Adjacency built: {len(self.adjacency)} nodes have neighbors")
 
     def _build_adjacency(self) -> Dict[int, set]:
-        """Build adjacency dictionary from all edge types."""
+        """
+        Builds a neighbor adjacency mapping from the graph's edge indices across all edge types, treating edges as undirected.
+        
+        Returns:
+            adj (Dict[int, set]): Mapping from node index to a set of neighboring node indices aggregated from all edge types.
+        """
         adj = {}
 
         for edge_type, edge_index in self.data.edge_index_dict.items():
@@ -95,17 +100,17 @@ class SelfSupervisedDataGenerator:
         pos_neg_ratio: float = 1.0
     ) -> Tuple[torch.Tensor, List[int], torch.Tensor]:
         """
-        Generate training pairs (query, node, label).
-
-        Args:
-            num_samples: Total number of samples to generate
-            pos_neg_ratio: Ratio of positive to negative samples
-
+        Generate a batch of node pairs labeled as positive (connected) or negative (unconnected) for self-supervised contrastive training.
+        
+        Parameters:
+            num_samples (int): Total number of pairs to generate.
+            pos_neg_ratio (float): Ratio of positive to negative samples (positive_count / negative_count).
+        
         Returns:
-            (query_embeddings, node_indices, labels)
-            - query_embeddings: [num_samples, 2048] - same as node embeddings
-            - node_indices: [num_samples] - target node indices
-            - labels: [num_samples] - 1 for positive, 0 for negative
+            tuple: A 3-tuple (query_embeddings, node_indices, labels)
+                - query_embeddings (torch.Tensor): Tensor of shape [N, F] with embeddings for the query nodes.
+                - node_indices (List[int]): List of length N with target node indices for each pair.
+                - labels (torch.Tensor): 1 for positive (connected) pairs, 0 for negative (unconnected) pairs.
         """
         num_pos = int(num_samples * pos_neg_ratio / (1 + pos_neg_ratio))
         num_neg = num_samples - num_pos
@@ -156,7 +161,15 @@ class SelfSupervisedDataGenerator:
 
 
 def load_graph(graph_path: Path):
-    """Load graph from disk."""
+    """
+    Load a saved PyG graph checkpoint from disk.
+    
+    Parameters:
+        graph_path (Path): Path to a torch checkpoint file produced by the graph export; the checkpoint must contain keys `'data'` (a PyG Data object) and `'node_id_map'` (a mapping of original node identifiers to node indices).
+    
+    Returns:
+        tuple: `(data, node_id_map)` where `data` is the loaded PyG `Data` object and `node_id_map` is a dictionary mapping original node IDs to graph node indices.
+    """
     logger.info(f"Loading graph from {graph_path}...")
     checkpoint = torch.load(graph_path, weights_only=False)
 
@@ -172,12 +185,14 @@ def load_graph(graph_path: Path):
 
 def train_gnn(config_path: Path, graph_path: Optional[Path] = None, epochs: Optional[int] = None):
     """
-    Train GraphSAGE on arXiv graph.
-
-    Args:
-        config_path: Path to configuration file
-        graph_path: Path to graph file (overrides config)
-        epochs: Number of epochs (overrides config)
+    Run GraphSAGE training on the arXiv graph using settings from a YAML configuration.
+    
+    Loads the graph and configuration, constructs a training configuration, generates self‑supervised training pairs, and runs the GraphSAGE training loop while logging progress and saving checkpoints.
+    
+    Parameters:
+        config_path (Path): Path to the YAML configuration file that defines architecture, training, sampling, and checkpoint settings.
+        graph_path (Optional[Path]): Optional path to a saved graph checkpoint; when provided, this overrides the graph path specified in the configuration.
+        epochs (Optional[int]): Optional override for the number of training epochs defined in the configuration.
     """
     # Load configuration
     with open(config_path) as f:
@@ -282,6 +297,16 @@ def train_gnn(config_path: Path, graph_path: Optional[Path] = None, epochs: Opti
 
 
 def main():
+    """
+    CLI entry point that parses command-line options and launches GraphSAGE training.
+    
+    Parses the following arguments from sys.argv and passes them to train_gnn:
+    - --config: path to the YAML configuration file (defaults to config/arxiv_import.yaml next to this script)
+    - --graph: optional path to a graph file that overrides the config
+    - --epochs: optional integer to override the configured number of training epochs
+    
+    On uncaught exceptions, logs the error with a stack trace and exits the process with code 1.
+    """
     parser = argparse.ArgumentParser(description='Train GraphSAGE on arXiv graph')
     parser.add_argument(
         '--config',

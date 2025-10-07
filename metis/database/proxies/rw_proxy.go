@@ -8,6 +8,11 @@ import (
     "regexp"
 )
 
+// RunReadWriteProxy starts a Unix domain socket proxy that forwards read-write HTTP requests
+// from the configured listen socket to the upstream socket with access control.
+//
+// It sets up the listening socket with appropriate permissions, removes any existing socket file,
+// and logs the proxy operation. It returns an error if any step in preparation or serving fails.
 func RunReadWriteProxy() error {
 	listenSocket := getEnv("LISTEN_SOCKET", defaultRWListenSocket)
 	upstreamSocket := getEnv("UPSTREAM_SOCKET", defaultUpstreamSocket)
@@ -35,7 +40,8 @@ func RunReadWriteProxy() error {
 }
 
 var dbScopedRW = regexp.MustCompile(`^/_db/[^/]+/_api/(document|index|collection|import|cursor)(/|$)`) // DB-scoped only
-var databaseAdminRW = regexp.MustCompile(`^/_api/database(/[^/]+)?$`) // Database management: /_api/database or /_api/database/{name}
+var databaseAdminRW = regexp.MustCompile(`^/_api/database(/[^/]+)?$`) // allowReadWrite enforces read-write access rules for incoming proxy requests.
+// It permits requests already allowed by allowReadOnly; allows database administration operations (POST to /_api/database to create a database and DELETE to /_api/database/{name} to drop a database); and permits mutation methods (POST, PUT, PATCH, DELETE) only for database-scoped endpoints. If a request is not permitted, it returns an error describing the disallowed method or path.
 
 func allowReadWrite(r *http.Request, peek BodyPeeker) error {
     // Permit safe RO requests as-is (GET, HEAD, OPTIONS, and safe cursor operations)

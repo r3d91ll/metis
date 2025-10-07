@@ -58,6 +58,14 @@ class ArangoClientError(grpc.RpcError):
     """gRPC-compatible error raised by the ArangoDB client."""
 
     def __init__(self, message: str, *, status: StatusCode = StatusCode.UNKNOWN, details: dict[str, Any] | None = None) -> None:
+        """
+        Initialize an ArangoClientError with a message, gRPC status code, and optional structured details.
+        
+        Parameters:
+            message (str): Human-readable error message.
+            status (StatusCode): gRPC status code representing the error condition.
+            details (dict[str, Any] | None): Additional structured error metadata; stored as an empty dict when not provided.
+        """
         super().__init__(message)
         self._message = message
         self._status = status
@@ -131,6 +139,16 @@ def _http_status_to_grpc(status_code: int) -> StatusCode:
 
 
 def _parse_timeout(value: str | None, default: float) -> float:
+    """
+    Parse a timeout value from a string, falling back to a default when the value is None or invalid.
+    
+    Parameters:
+        value (str | None): The timeout value to parse, typically in seconds as a string.
+        default (float): The fallback timeout to use if `value` is None or cannot be parsed as a float.
+    
+    Returns:
+        float: The parsed timeout in seconds, or `default` if parsing is not possible.
+    """
     if value is None:
         return default
     try:
@@ -153,7 +171,38 @@ def resolve_client_config(
     read_timeout: float | None = None,
     write_timeout: float | None = None,
 ) -> ArangoMemoryClientConfig:
-    """Resolve configuration using explicit parameters and environment values."""
+    """
+    Resolve an ArangoClientConfig from explicit arguments and environment variables.
+    
+    Builds the final client configuration by combining provided parameters with environment
+    variables and sensible defaults. Enforces authentication unless ARANGO_SKIP_AUTH is set;
+    resolves HTTP base URL, read/write Unix socket paths (supporting separate read/write
+    proxies or a single direct socket), and connect/read/write timeouts.
+    
+    Parameters:
+        database: Database name to use (default "metis_db").
+        username: Optional username; if omitted, uses ARANGO_USERNAME or "root".
+        password: Optional password; if omitted and authentication is required, reads ARANGO_PASSWORD.
+        socket_path: Single socket path to apply to both read and write if read_socket/write_socket are not provided.
+        read_socket: Optional path for the read-only Unix domain socket.
+        write_socket: Optional path for the read-write Unix domain socket.
+        use_proxies: If True (or omitted), prefer separate read/write proxy sockets; if False, use a single direct socket.
+        base_url: Optional HTTP base URL; if omitted, uses ARANGO_HTTP_BASE_URL or "http://localhost".
+        connect_timeout: Optional connect timeout in seconds; if omitted, reads ARANGO_CONNECT_TIMEOUT or defaults to 5.0.
+        read_timeout: Optional read timeout in seconds; if omitted, reads ARANGO_READ_TIMEOUT or defaults to 30.0.
+        write_timeout: Optional write timeout in seconds; if omitted, reads ARANGO_WRITE_TIMEOUT or defaults to 30.0.
+    
+    Environment variables referenced:
+        ARANGO_SKIP_AUTH, ARANGO_USERNAME, ARANGO_PASSWORD,
+        ARANGO_HTTP_BASE_URL, ARANGO_RO_SOCKET, ARANGO_RW_SOCKET, ARANGO_SOCKET,
+        ARANGO_CONNECT_TIMEOUT, ARANGO_READ_TIMEOUT, ARANGO_WRITE_TIMEOUT.
+    
+    Returns:
+        An ArangoClientConfig populated with resolved credentials, base URL, socket paths, and timeouts.
+    
+    Raises:
+        ValueError: If authentication is required but no password is provided (and ARANGO_SKIP_AUTH is not set).
+    """
 
     env = os.environ
 
@@ -224,6 +273,14 @@ class ArangoClient:
     """High-level ArangoDB client with Unix socket support and gRPC-compatible error handling."""
 
     def __init__(self, config: ArangoClientConfig) -> None:
+        """
+        Initialize the ArangoClient and create HTTP/2 clients for read and write according to the provided configuration.
+        
+        If the configured read and write sockets are the same, the same HTTP/2 client instance is reused for both directions; otherwise separate clients are created. The client's closed state is initialized to False.
+        
+        Parameters:
+            config (ArangoClientConfig): Resolved client configuration used to construct read/write HTTP/2 transports.
+        """
         self._config = config
         self._read_client = ArangoHttp2Client(config.build_read_config())
         if config.read_socket == config.write_socket:
@@ -236,6 +293,11 @@ class ArangoClient:
 
     # Context management ------------------------------------------------
     def close(self) -> None:
+        """
+        Close the client's underlying HTTP clients and mark the ArangoClient as closed.
+        
+        Closes the read client and, if the write client is distinct, closes the write client as well. This operation is idempotent; calling it multiple times has no effect. After closing, the client must not be used for further requests.
+        """
         if self._closed:
             return
         self._read_client.close()
@@ -244,9 +306,20 @@ class ArangoClient:
         self._closed = True
 
     def __enter__(self) -> "ArangoClient":  # pragma: no cover - helper
+        """
+        Enter a context for the client and return the client instance.
+        
+        Returns:
+            self: The same ArangoClient instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - helper
+        """
+        Exit the context manager and close the client.
+        
+        Called when leaving a with-block to ensure the client's resources are closed.
+        """
         self.close()
 
     # Public API --------------------------------------------------------
@@ -421,7 +494,14 @@ class ArangoClient:
             raise
 
     def _rollback_created(self, created: Sequence[str]) -> None:
-        """Attempt to drop collections created earlier in this call."""
+        """
+        Drop the specified collections in reverse creation order.
+        
+        This performs a best-effort cleanup: each collection name from `created` (interpreted as creation order) is deleted in reverse order and any errors raised while dropping a collection are ignored.
+        
+        Parameters:
+            created (Sequence[str]): Collection names in creation order; the function will attempt to drop them in reverse order.
+        """
         for name in reversed(created):
             path = f"/_db/{self._config.database}/_api/collection/{name}"
             try:
@@ -432,6 +512,12 @@ class ArangoClient:
 
     # Internal helpers --------------------------------------------------
     def _wrap_error(self, error: ArangoHttpError) -> ArangoClientError:
+        """
+        Convert an ArangoHttpError into an ArangoClientError suitable for gRPC-style handling.
+        
+        Returns:
+        	ArangoClientError: an error whose status is the gRPC StatusCode corresponding to the HTTP status and whose message and details are taken from the original ArangoHttpError.
+        """
         status = _http_status_to_grpc(error.status_code)
         message = error.details.get("errorMessage") or error.details.get("message") or str(error)
         return ArangoClientError(message, status=status, details=error.details)

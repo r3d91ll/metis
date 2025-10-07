@@ -38,10 +38,10 @@ class CombinedContextBuilder:
 
     def __init__(self, max_tokens: int = 32000):
         """
-        Initialize context builder.
-
-        Args:
-            max_tokens: Maximum tokens for embedding model (default: 32000 for Jina v4)
+        Create a CombinedContextBuilder configured with a token budget.
+        
+        Parameters:
+            max_tokens (int): Maximum number of tokens allowed for the combined context; used to compute a conservative character budget (max_chars = max_tokens * 4).
         """
         self.max_tokens = max_tokens
         # Conservative estimate: 4 chars per token average
@@ -54,15 +54,17 @@ class CombinedContextBuilder:
         include_latex: bool = True
     ) -> CombinedContext:
         """
-        Build combined context from paper and code documents.
-
-        Args:
-            paper_doc: Paper document from ArangoDB
-            code_doc: Code document from ArangoDB (optional)
-            include_latex: Whether to include LaTeX source (default: True)
-
+        Builds a unified text context from a paper document and optional code suitable for embedding generation.
+        
+        Assembles sections in priority order (metadata, markdown extraction, optional LaTeX, optional code), merges them into a single text blob trimmed to the builder's character limit, and records per-component sizes and whether truncation occurred.
+        
+        Parameters:
+            paper_doc (dict): Paper record containing at least `arxiv_id` and `title`. May include `markdown_content` and `latex_source` for body text.
+            code_doc (Optional[dict]): Optional code repository record; expected keys include `code_files` (mapping of path->content) and optional `repository_metadata` (may include `language`).
+            include_latex (bool): If True, include `latex_source` from `paper_doc` when present.
+        
         Returns:
-            CombinedContext with merged content
+            CombinedContext: Dataclass containing `arxiv_id`, `title`, merged `content`, per-component `components` character counts, `total_chars`, `total_tokens_estimate` (chars//4), `truncated` flag, and a `metadata` dict describing presence of code/LaTeX and code language.
         """
         arxiv_id = paper_doc["arxiv_id"]
         title = paper_doc["title"]
@@ -121,7 +123,21 @@ class CombinedContextBuilder:
         )
 
     def _build_metadata_section(self, paper_doc: Dict[str, any]) -> str:
-        """Build metadata section."""
+        """
+        Constructs a formatted metadata section for a paper.
+        
+        Parameters:
+            paper_doc (Dict[str, any]): Document dictionary containing paper metadata. Expected keys:
+                - "title" (str): Paper title (required).
+                - "arxiv_id" (str): arXiv identifier (required).
+                - "authors" (List[str], optional): List of author names; defaults to empty list.
+                - "abstract" (str, optional): Abstract text; defaults to empty string.
+        
+        Returns:
+            str: A markdown-formatted metadata section including the title as a top-level header,
+                 arXiv ID, a comma-separated authors line, an "Abstract" subsection, and a trailing
+                 delimiter line.
+        """
         title = paper_doc["title"]
         authors = paper_doc.get("authors", [])
         abstract = paper_doc.get("abstract", "")
@@ -141,7 +157,15 @@ class CombinedContextBuilder:
         return section
 
     def _build_markdown_section(self, markdown_content: str) -> str:
-        """Build markdown section from PDF extraction."""
+        """
+        Create a Markdown section titled "Paper Content (PDF Extraction)" containing the provided extracted paper text.
+        
+        Parameters:
+            markdown_content (str): Extracted paper text in Markdown format (from PDF extraction).
+        
+        Returns:
+            section (str): Formatted Markdown string with the section header, the provided content, and a trailing horizontal rule delimiter.
+        """
         section = f"""
 ## Paper Content (PDF Extraction)
 
@@ -152,7 +176,15 @@ class CombinedContextBuilder:
         return section
 
     def _build_latex_section(self, latex_content: str) -> str:
-        """Build LaTeX source section."""
+        """
+        Builds a titled LaTeX section containing the provided LaTeX source inside a fenced code block labeled `latex`, followed by a section delimiter.
+        
+        Parameters:
+            latex_content (str): Raw LaTeX source to include.
+        
+        Returns:
+            section (str): Formatted Markdown section with the LaTeX code block and trailing delimiter.
+        """
         section = f"""
 ## LaTeX Source (Mathematical Formulas & Structure)
 
@@ -165,7 +197,21 @@ class CombinedContextBuilder:
         return section
 
     def _build_code_section(self, code_doc: Dict[str, any]) -> str:
-        """Build code section from repository."""
+        """
+        Assembles a formatted "Code Repository" markdown section from repository metadata and files.
+        
+        Parameters:
+            code_doc (Dict[str, any]): Repository information with optional keys:
+                - "github_url": repository URL (string).
+                - "code_files": mapping of file path to file content (dict).
+                - "repository_metadata": dict that may contain "language" for the repo.
+        
+        Returns:
+            str: A markdown string containing a repository header (URL, language, file count)
+            and a sequential listing of each file as a fenced code block. Code fence language
+            hints are chosen from the file extension when available, otherwise from the
+            repository language, and the section is terminated with a separator.
+        """
         github_url = code_doc.get("github_url", "Unknown")
         code_files = code_doc.get("code_files", {})
         language = code_doc.get("repository_metadata", {}).get("language", "Unknown")
@@ -200,13 +246,19 @@ class CombinedContextBuilder:
         components: List[tuple[str, str]]
     ) -> tuple[str, Dict[str, int], bool]:
         """
-        Merge components and handle truncation if needed.
-
-        Args:
-            components: List of (name, content) tuples
-
+        Merge named text components into a single string constrained to the builder's max_chars, applying prioritization and truncation when necessary.
+        
+        Parameters:
+            components (List[tuple[str, str]]): Ordered list of (name, content) tuples representing sections to include.
+        
         Returns:
-            (merged_content, component_sizes, truncated)
+            tuple[str, Dict[str, int], bool]:
+                - merged_content: The assembled text containing fully included components and, if space required, a partially included component followed by a truncation marker.
+                - component_sizes: Mapping from component name to the number of characters from that component that were included in merged_content (0 if excluded). For a partially included component, this value equals the number of original content characters included (the truncation marker is not counted).
+                - truncated: `True` if any component was partially or fully omitted due to the size limit, `False` if all components fit within max_chars.
+        
+        Notes:
+            When content exceeds the size limit, components are included according to the priority order: "metadata", "markdown", "code", "latex". If a component is only partially included, a truncation marker is appended to the merged content. Components with very small remaining space may be excluded entirely (counted as 0).
         """
         component_sizes = {}
         truncated = False

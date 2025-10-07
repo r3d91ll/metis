@@ -25,7 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 def test_github_fetch():
-    """Test GitHub code fetching with Word2Vec."""
+    """
+    Run an end-to-end test of GitHub code fetching, filtering, storage, and optional repository search for the Word2Vec project.
+    
+    Performs the following checks:
+    - Fetches code from a known Word2Vec GitHub repository and collects metadata.
+    - Verifies that non-code files (README, docs, tests, examples, licenses, etc.) are excluded.
+    - Stores the fetched code into ArangoDB and verifies retrieval.
+    - Optionally searches for the official repository when a GitHub token is available.
+    
+    Returns:
+        bool: `True` if all tests pass, `False` otherwise.
+    """
     # Load configuration
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path) as f:

@@ -50,7 +50,15 @@ class ArxivImportPipeline:
     """
 
     def __init__(self, config_path: Path):
-        """Initialize pipeline with configuration."""
+        """
+        Initialize the pipeline from a YAML configuration file and configure runtime components.
+        
+        Reads configuration from `config_path`, initializes the embedder, configures ArangoDB client settings
+        (either TCP or Unix socket), and sets instance attributes for the data source, batch size, and log interval.
+        
+        Parameters:
+            config_path (Path): Path to the YAML configuration file for the import pipeline.
+        """
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
@@ -112,11 +120,17 @@ class ArxivImportPipeline:
 
     def read_papers(self, skip: int = 0, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
         """
-        Stream papers from NDJSON file.
-
-        Args:
-            skip: Number of papers to skip (for resuming)
-            limit: Maximum number of papers to process
+        Iterate over papers in the NDJSON source file, yielding each parsed JSON object.
+        
+        Skips the first `skip` lines and stops after `limit` papers have been yielded when `limit` is provided.
+        Malformed JSON lines are logged and skipped; iteration continues for subsequent lines.
+        
+        Parameters:
+            skip (int): Number of initial lines to skip (useful for resuming).
+            limit (Optional[int]): Maximum number of papers to yield; if None, yield all remaining papers.
+        
+        Returns:
+            Iterator[Dict[str, Any]]: An iterator that yields one parsed paper dictionary per valid NDJSON line.
         """
         logger.info(f"Reading papers from {self.data_file}")
         if skip > 0:
@@ -143,10 +157,18 @@ class ArxivImportPipeline:
 
     def process_paper(self, paper: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Transform raw paper JSON into database document.
-
+        Transform a raw arXiv paper JSON object into three documents prepared for database insertion.
+        
+        The returned dictionary contains:
+        - "metadata": lightweight paper metadata (internal key, arXiv id, authors, parsed authors, categories, primary category, submission and update dates, year/month fields, journal reference, DOI, comments, license, report number, submitter, versions, version count, and created_at timestamp).
+        - "abstract": full-text fields (internal key, arXiv id, title, abstract).
+        - "embedding": placeholders for vector fields (internal key, arXiv id, title_embedding, abstract_embedding, combined_embedding).
+        
+        Parameters:
+            paper (Dict[str, Any]): Raw paper JSON as read from the NDJSON source.
+        
         Returns:
-            Document ready for insertion, or None if processing fails
+            Optional[Dict[str, Dict[str, Any]]]: A dict with keys "metadata", "abstract", and "embedding" containing the prepared documents, or `None` if processing fails.
         """
         try:
             # Parse arXiv ID
@@ -225,10 +247,10 @@ class ArxivImportPipeline:
 
     def generate_embeddings(self, documents: list[Dict[str, Any]]) -> None:
         """
-        Generate embeddings for batch of documents (in-place modification).
-
-        Uses Jina v4 with 32k context window and 2048 dimensions.
-        Updates the 'embedding' sub-document for each paper.
+        Populate each document's 'embedding' sub-document with vector embeddings for the title, abstract, and combined title+abstract text.
+        
+        Parameters:
+            documents (list[Dict[str, Any]]): List of paper documents where each item contains an 'abstract' mapping with 'title' and 'abstract' strings and an 'embedding' dict which will be updated in place with keys `title_embedding`, `abstract_embedding`, and `combined_embedding` (each a list of floats).
         """
         # Extract texts from abstract sub-documents
         titles = [doc['abstract'].get('title', '') or '' for doc in documents]
@@ -257,10 +279,19 @@ class ArxivImportPipeline:
         batch_id: str
     ) -> Dict[str, int]:
         """
-        Import batch of documents to three separate collections.
-
+        Import a batch of processed paper documents into the papers, abstracts, and embeddings collections.
+        
+        Adds the provided batch_id to each metadata document, performs bulk inserts into the configured collections, and returns per-batch statistics.
+        
+        Parameters:
+            documents (list[Dict[str, Any]]): List of processed documents where each item contains keys 'metadata', 'abstract', and 'embedding'.
+            batch_id (str): Identifier to attach to each metadata document under the 'import_batch' field.
+        
         Returns:
-            Statistics dictionary with counts
+            dict: Statistics for the batch with keys:
+                - 'created' (int): Number of metadata documents reported as created.
+                - 'errors' (int): Number of errors encountered (currently always 0 in this implementation).
+                - 'empty' (int): Number of empty responses (currently 0 in this implementation).
         """
         collections = self.config['database']['collections']
 
@@ -289,7 +320,11 @@ class ArxivImportPipeline:
         return stats
 
     def create_database_if_needed(self) -> None:
-        """Create database via Unix socket if it doesn't exist (admin operation)."""
+        """
+        Ensure the configured ArangoDB database exists, creating it via the Unix domain socket admin API if necessary.
+        
+        Checks the database list over a Unix domain socket and, if the configured database name is not present, issues a create request to the ArangoDB HTTP API. Credentials are read from the environment variables ARANGO_USERNAME (default "root") and ARANGO_PASSWORD (default empty). Outcomes are logged; failures and unexpected HTTP responses are logged as warnings but are not raised.
+        """
         import httpx
         import os
 
@@ -344,7 +379,11 @@ class ArxivImportPipeline:
             )
 
     def setup_database(self, client: ArangoClient) -> None:
-        """Create collections and indexes (uses socket client)."""
+        """
+        Create the required ArangoDB collections and their index configurations for papers, abstracts, and embeddings.
+        
+        Registers three document collections (metadata, full-text abstracts, and vector embeddings) using the provided ArangoDB client and logs the creation results; exceptions raised by the client are caught and logged rather than propagated.
+        """
         logger.info("Setting up database schema with separate collections...")
 
         collections_config = self.config['database']['collections']
@@ -393,15 +432,19 @@ class ArxivImportPipeline:
         setup_db: bool = True
     ) -> Dict[str, Any]:
         """
-        Run complete import pipeline.
-
-        Args:
-            skip: Number of papers to skip (for resuming)
-            limit: Maximum number of papers to import
-            setup_db: Whether to create collections/indexes
-
+        Execute the import pipeline to process papers from the configured NDJSON source, generate embeddings in batches, and insert documents into the database.
+        
+        Parameters:
+            skip (int): Number of papers to skip at the start of the input stream (for resuming).
+            limit (Optional[int]): Maximum number of papers to process; no limit if None.
+            setup_db (bool): Whether to create the database and ensure collections/indexes before importing.
+        
         Returns:
-            Statistics dictionary
+            stats (Dict[str, Any]): Aggregate statistics for the run with keys:
+                - 'total_processed': total number of papers read and processed.
+                - 'total_created': number of documents successfully created in the database.
+                - 'total_errors': number of papers or batches that failed to process/import.
+                - 'batches': number of batches imported.
         """
         stats = {
             'total_processed': 0,
@@ -493,6 +536,30 @@ class ArxivImportPipeline:
 
 
 def main():
+    """
+    CLI entry point that runs the arXiv import pipeline and optional downstream stages.
+    
+    Parses command-line flags to control pipeline behavior (configuration path, resume/limit options, and which stages to run). The pipeline stages are:
+      1. Import papers from an NDJSON source into ArangoDB (with optional database setup).
+      2. Build graph edges from imported papers (optional).
+      3. Export the graph to PyG format (optional).
+      4. Train a GraphSAGE GNN on the exported graph (optional).
+    
+    Supported flags:
+      --config        Path to the YAML configuration file.
+      --limit         Maximum number of papers to import.
+      --skip          Number of papers to skip (for resuming).
+      --no-setup      Skip database setup and assume schema already exists.
+      --build-edges   Build graph edges after import.
+      --export-graph  Export graph after edges are built.
+      --train-gnn     Train the GNN after exporting the graph.
+      --full-pipeline Enable all stages (equivalent to specifying build-edges, export-graph, and train-gnn).
+    
+    Behavior notes:
+      - Prints stage progress and a final summary including throughput and artifact locations.
+      - Exits with code 0 on success.
+      - Exits with code 1 on critical failures (for example, if import produces more errors than created papers, or if edge building creates zero edges).
+    """
     parser = argparse.ArgumentParser(description='Import arXiv papers and build graph with GNN')
     parser.add_argument(
         '--config',

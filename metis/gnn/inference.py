@@ -42,14 +42,16 @@ class GraphSAGEInference:
         device: str = "cpu",
     ):
         """
-        Initialize inference wrapper.
-
-        Args:
-            model: Trained GraphSAGE model
-            query_projection: Learned projection layer (2048→512) for query embeddings
-            node_embeddings: Precomputed node embeddings [num_nodes, out_channels]
-            node_ids: List of node IDs corresponding to embeddings
-            device: Device for inference ('cpu' or 'cuda')
+        Wrap a trained MultiRelationalGraphSAGE model with optional projection and precomputed embeddings for device-aware inference.
+        
+        Stores the model on the specified device and prepares optional components for fast retrieval-based inference.
+        
+        Parameters:
+            model: A trained MultiRelationalGraphSAGE model; it will be moved to `device` and set to evaluation mode.
+            query_projection: Optional linear layer that maps query embeddings into the node-embedding space (e.g., 2048→512); if provided it will be moved to `device` and set to evaluation mode.
+            node_embeddings: Optional tensor of shape [num_nodes, out_channels] containing precomputed node embeddings; if provided it will be moved to `device` and used for similarity search.
+            node_ids: Optional list of node identifiers corresponding positionally to `node_embeddings`; used to construct an index mapping from node_id to embedding index.
+            device: Device identifier (e.g., "cpu" or "cuda") used for model and tensor placement.
         """
         self.model = model.to(device)
         self.model.eval()
@@ -76,19 +78,18 @@ class GraphSAGEInference:
         device: str = "cpu",
     ) -> GraphSAGEInference:
         """
-        Load model from checkpoint.
-
-        SECURITY WARNING: Only load checkpoints from trusted sources.
-        This function loads model weights and metadata from disk.
-
-        Args:
-            checkpoint_path: Path to saved model (.pt file)
-            node_embeddings: Precomputed embeddings
-            node_ids: Node IDs
-            device: Inference device
-
+        Construct a GraphSAGEInference instance by loading a saved model (and optional query projection) from a checkpoint file.
+        
+        Security: only load checkpoints from trusted sources because checkpoint files execute code during deserialization.
+        
+        Parameters:
+            checkpoint_path (Path): Filesystem path to the saved checkpoint containing model state and optional metadata.
+            node_embeddings (Optional[Tensor]): Optional precomputed node embeddings tensor shaped [num_nodes, out_channels]; use None to omit.
+            node_ids (Optional[List[str]]): Optional list mapping embedding indices to node identifier strings; use None to omit.
+            device (str): Device identifier for model placement (e.g., "cpu" or "cuda").
+        
         Returns:
-            GraphSAGEInference instance
+            GraphSAGEInference: An inference wrapper with the loaded model, optional query projection, and the provided node embeddings and IDs.
         """
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
@@ -128,17 +129,18 @@ class GraphSAGEInference:
         min_score: float = 0.5,
     ) -> List[Tuple[str, float]]:
         """
-        Find top-k relevant nodes for query using GraphSAGE embeddings.
-
-        This is Step 1 in the pipeline. PathRAG will prune these candidates.
-
-        Args:
-            query_embedding: Query embedding from Jina v4 [2048]
-            top_k: Number of candidate nodes to return
-            min_score: Minimum cosine similarity threshold
-
+        Retrieve the most relevant node IDs and their similarity scores for a given query embedding.
+        
+        Parameters:
+            query_embedding (np.ndarray): Query embedding vector to match against precomputed node embeddings.
+            top_k (int): Maximum number of candidate nodes to return.
+            min_score (float): Minimum cosine similarity required for a node to be considered.
+        
         Returns:
-            List of (node_id, score) tuples sorted by relevance
+            List[Tuple[str, float]]: List of (node_id, score) tuples sorted by descending score.
+        
+        Raises:
+            ValueError: If precomputed node embeddings are not available or the query projection layer is missing.
         """
         if self.node_embeddings is None:
             raise ValueError("No precomputed node embeddings available")
@@ -190,18 +192,14 @@ class GraphSAGEInference:
         edge_index_dict: Dict[str, Tensor],
     ) -> np.ndarray:
         """
-        Generate embedding for a NEW node (inductive).
-
-        Critical for dynamic knowledge graphs:
-        - New documents/code files added continuously
-        - No retraining needed
-
-        Args:
-            node_features: Features for new node [in_channels]
-            edge_index_dict: Edge indices connecting new node to graph
-
+        Compute an inductive embedding for a newly added node.
+        
+        Parameters:
+            node_features (np.ndarray): 1-D array of node features with length equal to the model's input channel size.
+            edge_index_dict (Dict[str, Tensor]): Mapping of edge type names to edge index tensors that connect the new node to the existing graph.
+        
         Returns:
-            Node embedding [out_channels]
+            np.ndarray: Embedding vector for the new node with shape [out_channels].
         """
         node_tensor = torch.from_numpy(node_features).float().to(self.device)
         node_tensor = node_tensor.unsqueeze(0)  # [1, in_channels]
@@ -217,16 +215,14 @@ class GraphSAGEInference:
         edge_index_dict: Dict[str, Tensor],
     ) -> Tensor:
         """
-        Precompute embeddings for all nodes in graph.
-
-        Run this once after training, then use for fast lookup.
-
-        Args:
-            x: Node features [num_nodes, in_channels]
-            edge_index_dict: All edge indices
-
+        Precompute embeddings for all nodes in the graph.
+        
+        Parameters:
+            x (Tensor): Node feature matrix with shape [num_nodes, in_channels].
+            edge_index_dict (Dict[str, Tensor]): Mapping of edge type to edge index tensors.
+        
         Returns:
-            Node embeddings [num_nodes, out_channels]
+            Tensor: Node embeddings with shape [num_nodes, out_channels].
         """
         with torch.no_grad():
             embeddings = self.model(x, edge_index_dict)

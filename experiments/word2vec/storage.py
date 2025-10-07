@@ -27,12 +27,15 @@ class CFExperimentStorage:
                  client: Optional[ArangoHttp2Client] = None,
                  config: Optional[Dict[str, Any]] = None):
         """
-        Initialize with configured ArangoDB client.
-
-        Args:
-            client: Existing ArangoDB client or None to create from config
-            config: Database configuration dictionary
-        """
+                 Configure the CFExperimentStorage with an ArangoDB client and predefined collection names.
+                 
+                 Parameters:
+                     client (Optional[ArangoHttp2Client]): An existing ArangoDB client to use; if omitted, a client will be created from `config`.
+                     config (Optional[Dict[str, Any]]): Configuration dictionary used to create an ArangoDB client when `client` is not provided.
+                 
+                 Notes:
+                     Sets `self.client`, `self.db_name`, and `self.collections` mapping for "papers", "code", and "embeddings".
+                 """
         if client:
             self.client = client
         else:
@@ -49,13 +52,18 @@ class CFExperimentStorage:
 
     def _create_client(self, db_config: Dict[str, Any]) -> ArangoHttp2Client:
         """
-        Create ArangoDB client from configuration.
-
-        Args:
-            db_config: Database configuration dictionary
-
+        Create an ArangoDB HTTP/2 client configured from the provided database settings.
+        
+        Parameters:
+            db_config (Dict[str, Any]): Configuration mapping. Recognized keys:
+                - "name": database name (defaults to "cf_experiments")
+                - "socket_path": Unix socket path to arangod (defaults to "/run/metis/readwrite/arangod.sock")
+        
+        Notes:
+            This function reads ARANGO_USERNAME and ARANGO_PASSWORD from the environment (defaults: "root" and "") to populate client credentials.
+        
         Returns:
-            Configured ArangoDB client
+            ArangoHttp2Client: A client configured with the resolved database name, socket path, base URL, credentials, and timeouts.
         """
         # Use Unix sockets for optimal performance (0.4ms p50 latency)
         # Default to Metis read-write socket
@@ -81,12 +89,17 @@ class CFExperimentStorage:
 
     def ensure_collections(self) -> None:
         """
-        Create collections if they don't exist.
-
-        Creates:
-        - arxiv_markdown: Paper content
-        - arxiv_code: Repository code
-        - arxiv_embeddings: Vector embeddings
+        Ensure the required ArangoDB collections for CF experiments exist in the configured database.
+        
+        If a collection from the instance's collection mapping is missing, it will be created. The managed collections include:
+        - arxiv_markdown (paper content)
+        - arxiv_code (repository code)
+        - arxiv_embeddings (vector embeddings)
+        
+        Side effects:
+        - Creates missing collections in the configured database.
+        - Logs creation and existence checks.
+        - May raise an exception if an unexpected error occurs while checking or creating a collection.
         """
         for collection_type, collection_name in self.collections.items():
             try:
@@ -115,15 +128,16 @@ class CFExperimentStorage:
                            arxiv_id: str,
                            paper_doc: Dict[str, Any]) -> str:
         """
-        Store paper markdown with metadata.
-
-        Args:
-            arxiv_id: arXiv identifier
-            paper_doc: Paper document data
-
-        Returns:
-            Document key in database
-        """
+                           Store a paper's metadata, markdown content, and derived quality and processing metadata into the papers collection.
+                           
+                           Parameters:
+                               arxiv_id (str): arXiv identifier used to derive the document key (dots and slashes replaced with underscores).
+                               paper_doc (Dict[str, Any]): Paper data expected to contain keys such as `title`, `authors`, `abstract`, `markdown_content`,
+                                   `latex_source`, and `processing_time`. Missing keys are treated as empty or default values.
+                           
+                           Returns:
+                               str: The document key stored in the database (derived from `arxiv_id` by replacing '.' and '/' with '_'). If a document with the same key already exists, it will be updated.
+                           """
         # Prepare document
         doc_key = arxiv_id.replace(".", "_").replace("/", "_")
 
@@ -217,15 +231,23 @@ class CFExperimentStorage:
                         arxiv_id: str,
                         embeddings: List[Dict[str, Any]]) -> int:
         """
-        Store embedding vectors with chunk metadata.
-
-        Args:
-            arxiv_id: arXiv identifier
-            embeddings: List of embedding documents
-
-        Returns:
-            Number of embeddings stored
-        """
+                        Store embedding vectors and associated metadata for an arXiv paper as separate documents.
+                        
+                        Parameters:
+                            arxiv_id (str): arXiv identifier used to derive document keys.
+                            embeddings (List[Dict[str, Any]]): List of embedding entries where each entry may include:
+                                - "text_preview" (str): text snippet for the chunk (used for preview, truncated to 200 chars),
+                                - "embedding" (List[float]): numeric embedding vector,
+                                - "context_tokens" (int): number of context tokens,
+                                - "chunk_tokens" (int): number of tokens in the chunk,
+                                - "chunk_overlap" (int): token overlap with previous chunk,
+                                - "has_code" (bool): whether the chunk contains code,
+                                - "paper_ratio" (float): proportion of paper content in the chunk,
+                                - "code_ratio" (float): proportion of code content in the chunk.
+                        
+                        Returns:
+                            int: Number of embedding documents inserted or updated.
+                        """
         documents = []
 
         for i, emb_data in enumerate(embeddings):
@@ -274,13 +296,13 @@ class CFExperimentStorage:
 
     def get_paper(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieve paper document by arXiv ID.
-
-        Args:
-            arxiv_id: arXiv identifier
-
+        Retrieve the stored paper document for the given arXiv identifier.
+        
+        Parameters:
+            arxiv_id (str): arXiv identifier used to derive the document key.
+        
         Returns:
-            Paper document or None if not found
+            dict | None: The paper document if found, otherwise `None`.
         """
         doc_key = arxiv_id.replace(".", "_").replace("/", "_")
 
@@ -293,13 +315,10 @@ class CFExperimentStorage:
 
     def get_code(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieve code document by arXiv ID.
-
-        Args:
-            arxiv_id: arXiv identifier
-
+        Retrieve the stored code document for the given arXiv ID.
+        
         Returns:
-            Code document or None if not found
+            dict: The code document if found, `None` otherwise.
         """
         doc_key = f"{arxiv_id.replace('.', '_').replace('/', '_')}_code"
 
@@ -312,10 +331,10 @@ class CFExperimentStorage:
 
     def get_collection_stats(self) -> Dict[str, int]:
         """
-        Get document counts for all collections.
-
+        Retrieve document counts for all configured collections.
+        
         Returns:
-            Dictionary mapping collection names to document counts
+            dict: Mapping of ArangoDB collection name to its document count. If retrieving a collection's count fails, that collection's value will be -1.
         """
         stats = {}
 
@@ -339,18 +358,20 @@ class CFExperimentStorage:
         archive_config: Dict[str, str]
     ) -> Optional[Path]:
         """
-        Archive source files after successful database storage.
-
-        Moves downloaded files (PDFs, LaTeX tarballs) from cache to archive
-        location to keep cache clean while preserving original sources.
-
-        Args:
-            arxiv_id: arXiv identifier
-            source_files: List of file paths to archive
-            archive_config: Configuration with archive_dir and archive_structure
-
+        Archive source files for an arXiv submission into a structured archive directory.
+        
+        Moves the provided source files into an archive location defined by archive_config; supports "flat", "by_date", and "by_family" archive structures.
+        
+        Parameters:
+            arxiv_id (str): arXiv identifier used to name the archive subdirectory.
+            source_files (List[Path]): Paths to files to move into the archive.
+            archive_config (Dict[str, str]): Archive configuration. Recognized keys:
+                - archive_dir: base directory for archives (default "data/archive").
+                - archive_structure: one of "flat", "by_date", or "by_family" (default "flat").
+                - family: used when archive_structure == "by_family" to group archives.
+        
         Returns:
-            Path to archive directory or None if archival failed
+            Optional[Path]: Path to the archive directory containing moved files, or `None` if no files were archived or an error occurred.
         """
         import shutil
 

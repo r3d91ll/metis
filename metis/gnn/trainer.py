@@ -68,7 +68,11 @@ class TrainingConfig:
     num_neighbors: Optional[List[int]] = None  # Neighbors per layer [layer1, layer2, layer3]
 
     def __post_init__(self):
-        """Set defaults for neighbor sampling."""
+        """
+        Set a default neighbor sampling schedule when sampling is enabled but no neighbor counts were provided.
+        
+        If `use_sampling` is True and `num_neighbors` is None, assigns `[10, 10, 10]` as the per-layer neighbor counts.
+        """
         if self.use_sampling and self.num_neighbors is None:
             # Default: sample 10 neighbors per layer for 3-layer model
             self.num_neighbors = [10, 10, 10]
@@ -99,6 +103,12 @@ class InfoNCELoss(nn.Module):
     """
 
     def __init__(self, temperature: float = 0.07):
+        """
+        Create an InfoNCE loss module that scales cosine similarities by a temperature.
+        
+        Parameters:
+            temperature (float): Positive scalar that scales (divides) cosine similarities before softmax, controlling sharpness of the distribution (smaller values produce sharper distributions).
+        """
         super().__init__()
         self.temperature = temperature
 
@@ -109,21 +119,18 @@ class InfoNCELoss(nn.Module):
         labels: Tensor,
     ) -> Tensor:
         """
-        Compute InfoNCE loss.
-
+        Compute the InfoNCE loss between query and node embeddings.
+        
         Args:
-            query_embeddings: [batch_size, embed_dim]
-            node_embeddings: [batch_size, embed_dim]
-            labels: [batch_size] (1=positive, 0=negative)
-                   Positive pairs should have label=1
-
+            query_embeddings: Tensor of shape [batch_size, embed_dim] containing query vectors.
+            node_embeddings: Tensor of shape [batch_size, embed_dim] containing node vectors.
+            labels: 1D Tensor of length batch_size where `1` indicates the corresponding query/node pair is a positive match and `0` indicates a negative.
+        
         Returns:
-            Scalar loss
-
-        Note:
-            This implementation assumes positive pairs are on the diagonal
-            of the similarity matrix. For best results, ensure batch contains
-            both positive and negative samples.
+            Scalar tensor containing the InfoNCE loss.
+        
+        Notes:
+            This function assumes positive pairs appear on the diagonal of the similarity matrix; if no positives are present it returns a zero-valued tensor that preserves gradient flow.
         """
         # Normalize embeddings
         query_embeddings = F.normalize(query_embeddings, p=2, dim=1)
@@ -161,6 +168,13 @@ class GraphSAGETrainer:
         config: TrainingConfig,
         edge_types: Optional[List[str]] = None,
     ):
+        """
+        Initialize the trainer by constructing the multi-relational GraphSAGE model, a query projection layer, the InfoNCE loss, optimizer, learning-rate scheduler, and default training state; also ensure the checkpoint directory exists.
+        
+        Parameters:
+            config (TrainingConfig): Training and model configuration (architecture, optimization, checkpointing, device, etc.).
+            edge_types (Optional[List[str]]): Optional list of edge/relation type names for the multi-relational GraphSAGE model.
+        """
         self.config = config
         self.device = torch.device(config.device)
 
@@ -214,22 +228,17 @@ class GraphSAGETrainer:
         train_mask: np.ndarray,
     ) -> float:
         """
-        Train for one epoch.
-
-        Args:
-            data: PyG Data object with graph structure
-            query_embeddings: [num_queries, 2048] query embeddings
-            node_indices: List of node indices for each query
-            labels: [num_queries] binary labels (1=positive, 0=negative)
-            train_mask: Boolean mask for training samples
-
+        Run a single training epoch using full-graph forward passes and update model parameters.
+        
+        Parameters:
+            data: PyG Data object containing node features and edge_index_dict for the full graph.
+            query_embeddings (Tensor): [num_queries, 2048] tensor of query vectors.
+            node_indices (List[int]): List mapping each query to its target node index in the graph.
+            labels (Tensor): [num_queries] binary labels (1 = positive pair, 0 = negative).
+            train_mask (np.ndarray): Boolean mask selecting which queries are used for training.
+        
         Returns:
-            Average training loss
-
-        Note:
-            If config.use_sampling=True and graph is large, consider using
-            train_epoch_sampled() for memory-efficient mini-batch training.
-            Full-graph training is acceptable for small/medium graphs (<100K nodes).
+            float: Average training loss across processed batches.
         """
         self.model.train()
 
@@ -292,23 +301,20 @@ class GraphSAGETrainer:
         train_mask: np.ndarray,
     ) -> float:
         """
-        Train for one epoch using mini-batch neighbor sampling.
-
-        More memory-efficient than train_epoch() for large graphs (>100K nodes).
-        Uses NeighborLoader to sample subgraphs for each batch.
-
-        Args:
-            data: PyG Data object with graph structure
-            query_embeddings: [num_queries, 2048] query embeddings
-            node_indices: List of node indices for each query
-            labels: [num_queries] binary labels (1=positive, 0=negative)
-            train_mask: Boolean mask for training samples
-
+        Perform one training epoch using mini-batch neighbor sampling.
+        
+        Parameters:
+            data: PyG Data object containing the full graph.
+            query_embeddings (Tensor): [num_queries, 2048] query embeddings.
+            node_indices (List[int]): Target node index for each query.
+            labels (Tensor): [num_queries] binary labels (1 = positive, 0 = negative).
+            train_mask (np.ndarray): Boolean mask selecting training samples from queries.
+        
         Returns:
-            Average training loss
-
+            float: Average training loss over processed batches.
+        
         Raises:
-            ImportError: If torch_geometric.loader.NeighborLoader not available
+            ImportError: If torch_geometric.loader.NeighborLoader is not available.
         """
         if not NEIGHBOR_SAMPLING_AVAILABLE:
             raise ImportError(
@@ -408,10 +414,18 @@ class GraphSAGETrainer:
         val_mask: np.ndarray,
     ) -> Tuple[float, Dict[str, float]]:
         """
-        Validate model.
-
+        Evaluate the model on the validation set and compute loss and similarity-based metrics.
+        
+        Parameters:
+            data: Graph data object containing node features (`data.x`) and `edge_index_dict`.
+            query_embeddings (Tensor): All query embeddings; used to select validation queries.
+            node_indices (List[int]): Mapping from query positions to target node indices in the graph.
+            labels (Tensor): Binary labels for query–node pairs (1 for positive, 0 for negative).
+            val_mask (np.ndarray): Boolean mask selecting which queries belong to the validation set.
+        
         Returns:
-            (val_loss, metrics_dict)
+            Tuple[float, Dict[str, float]]: `val_loss` (float) computed by the InfoNCE criterion, and `metrics` dictionary with keys
+            `"accuracy"`, `"pos_sim_mean"`, and `"neg_sim_mean"` describing cosine-based evaluation on the validation pairs.
         """
         self.model.eval()
 
@@ -450,7 +464,15 @@ class GraphSAGETrainer:
         node_embs: Tensor,
         labels: Tensor,
     ) -> Dict[str, float]:
-        """Compute evaluation metrics."""
+        """
+        Compute accuracy and mean cosine similarities between query and node embeddings.
+        
+        Returns:
+            metrics (Dict[str, float]): Dictionary with keys:
+                - "accuracy": Fraction of labels correctly predicted using a 0.5 cosine-similarity threshold.
+                - "pos_sim_mean": Mean cosine similarity for samples with label `1`, `0.0` if none.
+                - "neg_sim_mean": Mean cosine similarity for samples with label `0`, `0.0` if none.
+        """
         # Normalize embeddings
         query_embs = F.normalize(query_embs, p=2, dim=1)
         node_embs = F.normalize(node_embs, p=2, dim=1)
@@ -485,15 +507,17 @@ class GraphSAGETrainer:
         val_mask: np.ndarray,
     ):
         """
-        Train GraphSAGE model.
-
-        Args:
-            data: PyG Data object
-            query_embeddings: Query embeddings
-            node_indices: Node index for each query
-            labels: Binary labels
-            train_mask: Training sample mask
-            val_mask: Validation sample mask
+        Run the full training loop for the GraphSAGE model, performing epoch-wise training, validation, learning-rate scheduling, checkpointing, and early stopping.
+        
+        This method updates the trainer's internal state (current_epoch, train_losses, val_losses, best_val_loss, patience_counter) and saves checkpoints according to the configuration.
+        
+        Parameters:
+            data: PyTorch Geometric Data object containing the graph (node features, edge index/types, etc.).
+            query_embeddings (Tensor): Per-query feature embeddings (one row per query).
+            node_indices (List[int]): Target node index for each query in query_embeddings.
+            labels (Tensor): Binary labels for each query–node pair (1 for positive, 0 for negative).
+            train_mask (np.ndarray): Boolean or binary mask selecting training samples from the queries.
+            val_mask (np.ndarray): Boolean or binary mask selecting validation samples from the queries.
         """
         logger.info("Starting GraphSAGE training...")
         logger.info(f"Device: {self.device}")
@@ -548,7 +572,14 @@ class GraphSAGETrainer:
         logger.info(f"Best validation loss: {self.best_val_loss:.4f}")
 
     def save_checkpoint(self, is_best: bool = False):
-        """Save model checkpoint."""
+        """
+        Save the trainer state and model weights to the configured checkpoint directory.
+        
+        Saves a checkpoint containing training state (current epoch, best validation loss, training/validation loss histories), optimizer and scheduler states, model and query projection parameters, the trainer config and architecture fields, and model edge types. Writes the checkpoint to "latest.pt" and, if `is_best` is True, also writes a copy to "best.pt" and logs the saved best checkpoint.
+        
+        Parameters:
+            is_best (bool): If True, also persist a copy as the best-known checkpoint ("best.pt").
+        """
         checkpoint = {
             "epoch": self.current_epoch,
             "model_state_dict": self.model.state_dict(),
@@ -580,9 +611,19 @@ class GraphSAGETrainer:
     @classmethod
     def load_checkpoint(cls, checkpoint_path: Path, config: Optional[TrainingConfig] = None):
         """
-        Load trainer from checkpoint.
-
-        SECURITY WARNING: Only load checkpoints from trusted sources.
+        Reconstructs a GraphSAGETrainer instance from a saved checkpoint file.
+        
+        If no config is provided, the trainer configuration is reconstructed from the checkpoint. The checkpointed model weights, optional query projection weights, optimizer state, scheduler state, current epoch, best validation loss, and training/validation loss histories are restored onto the new trainer instance.
+        
+        Parameters:
+            checkpoint_path (Path): Path to the checkpoint file produced by save_checkpoint.
+            config (Optional[TrainingConfig]): Optional TrainingConfig to override the saved config; if omitted, the config embedded in the checkpoint is used.
+        
+        Returns:
+            trainer (GraphSAGETrainer): A trainer instance restored to the checkpointed state.
+        
+        Security:
+            Only load checkpoints from trusted sources because loading arbitrary files can execute code or load untrusted data.
         """
         checkpoint = torch.load(checkpoint_path, weights_only=True)
 

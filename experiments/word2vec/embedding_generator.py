@@ -38,12 +38,14 @@ class EmbeddingGenerator:
         batch_size: int = 4
     ):
         """
-        Initialize embedding generator.
-
-        Args:
-            model_name: Jina model identifier
-            device: Compute device (cuda/cpu)
-            batch_size: Batch size for encoding
+        Create an EmbeddingGenerator configured for Jina v4 models.
+        
+        Initializes and prepares an underlying JinaV4Embedder using the given model, device, and batch size. The embedder is configured to use the full token context window and no chunk overlap.
+        
+        Parameters:
+            model_name (str): Jina model identifier to load.
+            device (str): Compute device to run the model on (e.g., "cuda" or "cpu").
+            batch_size (int): Number of texts to encode per batch.
         """
         logger.info(f"Initializing Jina v4 embedder on {device}")
 
@@ -69,15 +71,15 @@ class EmbeddingGenerator:
         prompt_name: str = "passage"
     ) -> np.ndarray:
         """
-        Generate embedding for a single context.
-
-        Args:
-            context: Combined paper+code context
-            task: Embedding task (default: retrieval)
-            prompt_name: Jina prompt name (passage/query)
-
+        Generate an embedding vector for the given text context.
+        
+        Parameters:
+            context (str): Text to embed (e.g., combined paper and code context).
+            task (str): Embedding task to use (e.g., "retrieval").
+            prompt_name (str): Named prompt to guide the embedder (e.g., "passage" or "query").
+        
         Returns:
-            2048-dimensional embedding vector
+            np.ndarray: A NumPy array of shape (2048,) containing the embedding for the provided context.
         """
         logger.info(
             f"Generating embedding for {len(context):,} char context "
@@ -100,15 +102,17 @@ class EmbeddingGenerator:
         prompt_name: str = "passage"
     ) -> np.ndarray:
         """
-        Generate embeddings for multiple contexts.
-
-        Args:
-            contexts: List of combined contexts
-            task: Embedding task
-            prompt_name: Jina prompt name
-
+        Create embeddings for multiple input texts.
+        
+        Encodes each string in `contexts` using the configured embedder with the given task and prompt.
+        
+        Parameters:
+            contexts (List[str]): Texts to encode, one entry per item to embed.
+            task (str): Embedding task to request from the model (e.g., "retrieval").
+            prompt_name (str): Prompt identifier to use with the Jina embedder.
+        
         Returns:
-            Array of embeddings (n_contexts x 2048)
+            np.ndarray: Array of embeddings with shape (n_contexts, embedding_dim) — `embedding_dim` is the model's output dimension (2048 by default).
         """
         logger.info(f"Generating batch embeddings for {len(contexts)} contexts")
 
@@ -128,15 +132,26 @@ class EmbeddingGenerator:
         metadata: Optional[Dict] = None
     ) -> Dict:
         """
-        Generate embedding with metadata for a paper.
-
-        Args:
-            arxiv_id: arXiv identifier
-            context: Combined context
-            metadata: Additional metadata
-
+        Generate an embedding for a paper and return a metadata-rich result dictionary.
+        
+        Parameters:
+            arxiv_id (str): arXiv identifier for the paper.
+            context (str): Combined text context to encode into an embedding.
+            metadata (Optional[Dict]): Optional additional metadata to include in the returned result.
+        
         Returns:
-            Dictionary with embedding and metadata
+            dict: A result dictionary containing:
+                - "arxiv_id" (str): the provided arXiv identifier.
+                - "embedding" (List[float]): embedding vector serialized as a list.
+                - "dimensions" (int): embedding dimensionality.
+                - "context_chars" (int): number of characters in the provided context.
+                - "context_tokens_estimate" (int): approximate token count (context length // 4).
+                - "processing_time_seconds" (float): wall-clock time taken to generate the embedding.
+                - "timestamp" (str): ISO-formatted timestamp when the result was created.
+                - "model" (str): model identifier used to produce the embedding.
+                - "task" (str): task name used for the embedding call.
+                - "prompt" (str): prompt name used for the embedding call.
+                - "metadata" (Dict, optional): the provided additional metadata when supplied.
         """
         start_time = datetime.now()
 
@@ -168,34 +183,38 @@ class EmbeddingGenerator:
         return result
 
     def close(self):
-        """Clean up resources."""
+        """
+        Placeholder method to release external resources associated with the embedder.
+        
+        This embedder does not require explicit cleanup, so this method performs no action.
+        """
         # JinaV4Embedder doesn't require explicit cleanup
         pass
 
 
 def estimate_embedding_time(context_chars: int, chars_per_second: int = 50000) -> float:
     """
-    Estimate embedding generation time.
-
-    Args:
-        context_chars: Number of characters in context
-        chars_per_second: Processing throughput (default: 50k chars/s)
-
+    Estimate time to generate an embedding for a given text length.
+    
+    Parameters:
+        context_chars (int): Number of characters to embed.
+        chars_per_second (int): Assumed throughput in characters per second (default 50000).
+    
     Returns:
-        Estimated time in seconds
+        float: Estimated time in seconds.
     """
     return context_chars / chars_per_second
 
 
 def estimate_memory_usage(embedding_dim: int = 2048, dtype_bytes: int = 4) -> int:
     """
-    Estimate memory usage for embedding.
-
-    Args:
-        embedding_dim: Embedding dimensions
-        dtype_bytes: Bytes per dimension (4 for float32)
-
+    Estimate the memory (in bytes) required to store a single embedding vector.
+    
+    Parameters:
+        embedding_dim (int): Number of dimensions in the embedding.
+        dtype_bytes (int): Number of bytes per element (e.g., 4 for float32).
+    
     Returns:
-        Memory usage in bytes
+        int: Memory usage in bytes for the embedding.
     """
     return embedding_dim * dtype_bytes

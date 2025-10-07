@@ -45,7 +45,12 @@ class ExperimentResults:
     total_embeddings: int = 0
 
     def add_paper_result(self, result: PaperResults):
-        """Add a paper result to the experiment."""
+        """
+        Record a PaperResults into the experiment and update aggregate counters.
+        
+        Parameters:
+            result (PaperResults): Per-paper results to append. If `result.stored_in_db` is true and `result.error` is None, `successful_papers` is incremented. If `result.code_found` is true, `repos_found` is incremented. `total_embeddings` is increased by `result.embedding_chunks`.
+        """
         self.papers_results.append(result)
         if result.stored_in_db and not result.error:
             self.successful_papers += 1
@@ -54,20 +59,34 @@ class ExperimentResults:
         self.total_embeddings += result.embedding_chunks
 
     def finalize(self):
-        """Mark experiment as complete."""
+        """
+        Finalize the experiment by recording its end time and total paper count.
+        
+        Sets `end_time` to the current timestamp and updates `total_papers` to the number of entries in `papers_results`.
+        """
         self.end_time = datetime.now()
         self.total_papers = len(self.papers_results)
 
     @property
     def duration_seconds(self) -> float:
-        """Calculate total experiment duration."""
+        """
+        Return the experiment duration in seconds.
+        
+        Returns:
+            float: Number of seconds between `end_time` and `start_time` if `end_time` is set, otherwise 0.0.
+        """
         if self.end_time:
             return (self.end_time - self.start_time).total_seconds()
         return 0.0
 
     @property
     def success_rate(self) -> float:
-        """Calculate success rate as percentage."""
+        """
+        Percentage of papers that were successfully stored in the database, expressed as a percentage.
+        
+        Returns:
+            float: Percentage of successful papers; 0.0 if no papers were recorded.
+        """
         if self.total_papers == 0:
             return 0.0
         return (self.successful_papers / self.total_papers) * 100
@@ -85,10 +104,10 @@ class CFPaperExperiment(ABC):
     @abstractmethod
     def PAPERS(self) -> List[Tuple[str, str, List[str]]]:
         """
-        List of papers to process.
-
+        List of papers the experiment will process.
+        
         Returns:
-            List of (arxiv_id, title, authors) tuples
+            List[Tuple[str, str, List[str]]]: Tuples of (arxiv_id, title, authors) where `arxiv_id` is the paper identifier, `title` is the paper title, and `authors` is a list of author names.
         """
         pass
 
@@ -96,10 +115,10 @@ class CFPaperExperiment(ABC):
     @abstractmethod
     def HYPOTHESIS(self) -> str:
         """
-        Hypothesis about α value range for this experiment.
-
+        Provide the experiment's hypothesis describing the expected range of α.
+        
         Returns:
-            String describing the expected α range
+            Hypothesis text describing the expected range of α.
         """
         pass
 
@@ -107,19 +126,23 @@ class CFPaperExperiment(ABC):
     @abstractmethod
     def EXPERIMENT_NAME(self) -> str:
         """
-        Name of the experiment.
-
+        Experiment identifier used to label this experiment in logs, result objects, and output files.
+        
         Returns:
-            String identifier for the experiment
+            str: Short, human-readable name that uniquely identifies the experiment (used in logs, saved results, and filenames).
         """
         pass
 
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialize experiment with configuration.
-
-        Args:
-            config: Experiment configuration dictionary
+        Initialize the experiment instance with the provided configuration and prepare result tracking.
+        
+        Parameters:
+            config (Dict[str, Any]): Configuration options for the experiment.
+        
+        Notes:
+            Sets up self.results (an ExperimentResults initialized with the class's EXPERIMENT_NAME and HYPOTHESIS)
+            and a module-scoped logger named "<module>.<EXPERIMENT_NAME>".
         """
         self.config = config
         self.results = ExperimentResults(
@@ -134,24 +157,26 @@ class CFPaperExperiment(ABC):
                      title: str,
                      authors: List[str]) -> PaperResults:
         """
-        Process a single paper through the full pipeline.
-
-        Args:
-            arxiv_id: arXiv identifier
-            title: Paper title
-            authors: List of author names
-
-        Returns:
-            PaperResults with processing outcomes
-        """
+                     Process a single paper through the experiment pipeline and produce its processing results.
+                     
+                     Parameters:
+                         arxiv_id (str): arXiv identifier of the paper.
+                         title (str): Paper title.
+                         authors (List[str]): List of author names.
+                     
+                     Returns:
+                         PaperResults: Result object containing processing flags, metrics (timing, word/line counts, embedding chunks), and an optional error message.
+                     """
         pass
 
     def run(self) -> ExperimentResults:
         """
-        Execute complete experiment pipeline.
-
+        Run the experiment over all configured papers and aggregate per-paper outcomes.
+        
+        Processes each configured paper, records each paper's results into the experiment summary, finalizes timing, and returns the aggregated results.
+        
         Returns:
-            ExperimentResults with timing and success metrics
+            ExperimentResults: Aggregated results for the experiment, including per-paper records, start and end timestamps, and summary metrics.
         """
         self.logger.info(f"Starting {self.EXPERIMENT_NAME} experiment")
         self.logger.info(f"Hypothesis: {self.HYPOTHESIS}")
@@ -198,10 +223,12 @@ class CFPaperExperiment(ABC):
 
     def save_results(self, output_path: Path):
         """
-        Save experiment results to JSON.
-
-        Args:
-            output_path: Path to save results file
+        Write the experiment's aggregated metadata and per-paper results to a JSON file.
+        
+        Creates parent directories for the target path if needed and overwrites any existing file at output_path. Timestamps are serialized in ISO 8601 format; the output JSON contains top-level keys: "experiment", "hypothesis", "start_time", "end_time", "duration_seconds", "summary", and "papers".
+        
+        Parameters:
+            output_path (Path): Filesystem path where the JSON results will be written.
         """
         import json
 
