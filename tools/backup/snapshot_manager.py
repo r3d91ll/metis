@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +82,6 @@ class SnapshotManager:
             because arangodump is not yet supported by the Go security proxies (issue #5).
             This is acceptable for backups since they're not time-sensitive operations.
         """
-        import os
-
         self.db_name = db_name
         self.db_endpoint = db_endpoint  # TCP for backups only
         self.db_username = db_username
