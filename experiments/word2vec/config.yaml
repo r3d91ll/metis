@@ -27,7 +27,18 @@ papers:
     authors: ["Aditya Grover", "Jure Leskovec"]
 
 infrastructure:
+  # Active cache for downloading and processing
   cache_dir: "data/experiments/word2vec/cache"
+
+  # Archive location for successfully processed documents
+  # After papers/code are loaded into database, source files are moved here
+  archive_dir: "data/experiments/word2vec/archive"
+
+  # Archive organization
+  # - "flat": All files in archive_dir/{arxiv_id}/
+  # - "by_date": archive_dir/YYYY-MM-DD/{arxiv_id}/
+  # - "by_family": archive_dir/word2vec/{arxiv_id}/
+  archive_structure: "flat"
   temp_dir: "/tmp/word2vec_cf"
   log_level: "INFO"
 

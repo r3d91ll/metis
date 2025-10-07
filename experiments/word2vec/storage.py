@@ -332,6 +332,71 @@ class CFExperimentStorage:
 
         return stats
 
+    def archive_source_files(
+        self,
+        arxiv_id: str,
+        source_files: List[Path],
+        archive_config: Dict[str, str]
+    ) -> Optional[Path]:
+        """
+        Archive source files after successful database storage.
+
+        Moves downloaded files (PDFs, LaTeX tarballs) from cache to archive
+        location to keep cache clean while preserving original sources.
+
+        Args:
+            arxiv_id: arXiv identifier
+            source_files: List of file paths to archive
+            archive_config: Configuration with archive_dir and archive_structure
+
+        Returns:
+            Path to archive directory or None if archival failed
+        """
+        import shutil
+
+        try:
+            # Get archive configuration
+            archive_dir = Path(archive_config.get("archive_dir", "data/archive"))
+            archive_structure = archive_config.get("archive_structure", "flat")
+
+            # Determine archive location based on structure
+            if archive_structure == "by_date":
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                target_dir = archive_dir / date_str / arxiv_id.replace(".", "_")
+            elif archive_structure == "by_family":
+                family = archive_config.get("family", "default")
+                target_dir = archive_dir / family / arxiv_id.replace(".", "_")
+            else:  # flat
+                target_dir = archive_dir / arxiv_id.replace(".", "_")
+
+            # Create archive directory
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            # Move files to archive
+            archived_files = []
+            for source_file in source_files:
+                if not source_file.exists():
+                    logger.warning(f"Source file not found: {source_file}")
+                    continue
+
+                target_file = target_dir / source_file.name
+                shutil.move(str(source_file), str(target_file))
+                archived_files.append(target_file)
+                logger.debug(f"Archived {source_file.name} → {target_file}")
+
+            if archived_files:
+                logger.info(
+                    f"Archived {len(archived_files)} files for {arxiv_id} → {target_dir}"
+                )
+                return target_dir
+            else:
+                logger.warning(f"No files archived for {arxiv_id}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to archive files for {arxiv_id}: {e}")
+            return None
+
     def close(self):
         """Close database connection."""
         if self.client:

@@ -156,3 +156,4 @@ experiments/arxiv_import/data/*.json
 experiments/arxiv_import/data/*.json.gz
 *.pdf
 old-donotuse/*
+data/experiments/

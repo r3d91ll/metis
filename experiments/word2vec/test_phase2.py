@@ -178,8 +178,36 @@ def test_phase2():
         else:
             logger.info(f"✓ Content fits within context window ({max_chars:,} chars)")
 
-        # Step 5: Statistics
-        logger.info("\nStep 5: Collection statistics")
+        # Step 5: Archive source files
+        logger.info("\nStep 5: Archive source files")
+        logger.info("-" * 80)
+
+        # Collect source files to archive
+        source_files = []
+        if paper_doc.pdf_path.exists():
+            source_files.append(paper_doc.pdf_path)
+
+        # Check for LaTeX source
+        latex_path = paper_doc.pdf_path.parent / f"{arxiv_id.replace('.', '_')}_source.tar.gz"
+        if latex_path.exists():
+            source_files.append(latex_path)
+
+        if source_files:
+            archive_dir = storage.archive_source_files(
+                arxiv_id,
+                source_files,
+                config.get("infrastructure", {})
+            )
+            if archive_dir:
+                logger.info(f"✓ Archived {len(source_files)} files to {archive_dir}")
+                logger.info(f"  Files: {', '.join(f.name for f in source_files)}")
+            else:
+                logger.warning("⚠ Failed to archive files")
+        else:
+            logger.info("  No source files to archive")
+
+        # Step 6: Statistics
+        logger.info("\nStep 6: Collection statistics")
         logger.info("-" * 80)
 
         stats = storage.get_collection_stats()
