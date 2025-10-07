@@ -4,6 +4,37 @@ Production infrastructure and data processing tools for the Metis semantic knowl
 
 ## Directory Structure
 
+### `backup/`
+
+**Snapshot manager for ArangoDB and bulk storage backup/restore**
+
+Comprehensive backup system enabling safe experimentation with rollback capability.
+
+**Key Features:**
+- Full system snapshots (database + bulk storage)
+- Automatic retention policy (last 10, weekly for 3 months)
+- Permanent snapshot flag for milestones
+- CLI interface with safety confirmations
+- Git commit/branch tracking
+
+**Quick Start:**
+```bash
+# Take snapshot
+python -m tools.backup.cli create "Before experiment"
+
+# List snapshots
+python -m tools.backup.cli list
+
+# Restore if needed
+python -m tools.backup.cli restore <snapshot_name>
+```
+
+**Documentation:**
+- [Quick Reference](SNAPSHOT_QUICKSTART.md) - Essential commands
+- [Full Documentation](backup/README.md) - Detailed workflows and examples
+
+**Status:** ✅ Production ready - 26/26 tests passing
+
 ### `arxiv_import/`
 
 **Production pipeline for importing arXiv papers into ArangoDB**
