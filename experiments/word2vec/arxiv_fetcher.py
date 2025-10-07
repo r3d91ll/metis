@@ -45,13 +45,15 @@ class ArxivPaperFetcher:
                  cache_dir: Optional[Path] = None,
                  max_retries: int = 3):
         """
-        Initialize with Docling extractor and cache directory.
-
-        Args:
-            extractor: DoclingExtractor instance (creates default if None)
-            cache_dir: Directory to cache PDFs (creates temp if None)
-            max_retries: Maximum number of download retries
-        """
+                 Create an ArxivPaperFetcher configured with a Docling extractor, cache directory, and retry policy.
+                 
+                 If `extractor` is omitted, attempts to instantiate a DoclingExtractor and falls back to a minimal PyMuPDF-based extractor if Docling is unavailable or its API differs. Ensures `cache_dir` is a Path (defaults to /tmp/arxiv_cache) and creates the directory if it does not exist. Initializes the arXiv client and stores the maximum number of download retries.
+                 
+                 Parameters:
+                     extractor (Optional[DoclingExtractor]): Preconfigured Docling extractor to use; if None, a default extractor will be created or a fallback configured when Docling cannot be initialized.
+                     cache_dir (Optional[Path | str]): Path to the directory used for caching downloaded PDFs and sources; if None, defaults to /tmp/arxiv_cache. String paths will be converted to Path.
+                     max_retries (int): Maximum number of attempts to retry network downloads before failing.
+                 """
         # Initialize extractor - will use PyMuPDF fallback if Docling has API issues
         if extractor is None:
             try:
@@ -80,18 +82,16 @@ class ArxivPaperFetcher:
 
     def fetch_paper(self, arxiv_id: str, fetch_latex: bool = True) -> PaperDocument:
         """
-        Download paper from arXiv and convert to markdown.
-
-        Args:
-            arxiv_id: arXiv identifier (e.g., "1301.3781")
-            fetch_latex: Whether to fetch LaTeX source (default: True)
-
+        Fetches an arXiv paper, converts its PDF to markdown, and returns a PaperDocument.
+        
+        Caches downloaded PDF and source tarball in the fetcher's cache_dir and, when requested,
+        attempts to download and concatenate the paper's LaTeX source files.
+        
+        Parameters:
+            fetch_latex (bool): If True, attempt to download and extract the paper's LaTeX source; if False, skip LaTeX retrieval.
+        
         Returns:
-            PaperDocument with markdown content, LaTeX source, and metadata
-
-        Raises:
-            ArxivError: If download fails after retries
-            ExtractionError: If PDF conversion fails
+            PaperDocument: Contains arXiv metadata, extracted markdown content, optional concatenated LaTeX source, local PDF path, and processing metadata.
         """
         start_time = datetime.now()
 
@@ -142,17 +142,27 @@ class ArxivPaperFetcher:
 
     def _download_pdf(self, arxiv_id: str, pdf_path: Path) -> Dict[str, Any]:
         """
-        Download PDF with retry logic.
-
-        Args:
-            arxiv_id: arXiv identifier
-            pdf_path: Path to save PDF
-
+        Download the PDF for the given arXiv identifier, save it to pdf_path, and return extracted paper metadata.
+        
+        Parameters:
+            arxiv_id (str): The arXiv identifier of the paper to download.
+            pdf_path (Path): Filesystem path where the PDF will be written.
+        
         Returns:
-            Paper metadata dictionary
-
+            dict: Metadata for the paper containing keys:
+                - "title" (str)
+                - "authors" (List[str])
+                - "abstract" (str)
+                - "published" (str, ISO 8601)
+                - "updated" (Optional[str], ISO 8601 or None)
+                - "categories" (List[str])
+                - "primary_category" (str)
+                - "pdf_url" (str)
+                - "entry_id" (str)
+        
         Raises:
-            RuntimeError: If download fails after retries
+            RuntimeError: If the PDF cannot be downloaded, the downloaded file is missing or empty,
+                          or all retry attempts (controlled by the instance's max_retries) fail.
         """
         for attempt in range(self.max_retries):
             try:
@@ -198,13 +208,22 @@ class ArxivPaperFetcher:
 
     def _get_metadata(self, arxiv_id: str) -> Dict[str, Any]:
         """
-        Get paper metadata without downloading PDF.
-
-        Args:
-            arxiv_id: arXiv identifier
-
+        Retrieve metadata for an arXiv paper without downloading its PDF.
+        
         Returns:
-            Paper metadata dictionary
+            A dictionary with the paper metadata. Expected keys:
+            - `title` (str)
+            - `authors` (List[str])
+            - `abstract` (str)
+            - `published` (ISO 8601 str or None)
+            - `updated` (ISO 8601 str or None)
+            - `categories` (List[str])
+            - `primary_category` (str or None)
+            - `pdf_url` (str or None)
+            - `entry_id` (str or None)
+        
+            On failure, returns a fallback dictionary containing a generic `title`, empty `authors`
+            and `abstract`, `published` set to None, and an empty `categories` list.
         """
         try:
             search = arxiv.Search(id_list=[arxiv_id])
@@ -233,16 +252,18 @@ class ArxivPaperFetcher:
 
     def _extract_markdown(self, pdf_path: Path) -> Dict[str, Any]:
         """
-        Extract markdown from PDF using Docling.
-
-        Args:
-            pdf_path: Path to PDF file
-
+        Extract markdown content and associated metadata from a PDF using the configured extractor.
+        
+        Parameters:
+            pdf_path (Path): Path to the PDF file to process.
+        
         Returns:
-            Dictionary with markdown content and metadata
-
+            result (Dict[str, Any]): Dictionary with keys:
+                - "markdown" (str): Extracted markdown/text content.
+                - "metadata" (Dict[str, Any]): Metadata returned by the extractor.
+        
         Raises:
-            RuntimeError: If extraction fails
+            RuntimeError: If extraction fails or the extracted content is shorter than 100 characters.
         """
         try:
             result = self.extractor.extract(pdf_path)
@@ -275,14 +296,14 @@ class ArxivPaperFetcher:
 
     def _download_latex_source(self, arxiv_id: str, latex_path: Path) -> Optional[str]:
         """
-        Download LaTeX source from arXiv.
-
-        Args:
-            arxiv_id: arXiv identifier
-            latex_path: Path to save source tarball
-
+        Download the arXiv LaTeX source tarball for an identifier and return the concatenated contents of its `.tex` files.
+        
+        Parameters:
+            arxiv_id (str): The arXiv identifier of the paper.
+            latex_path (Path): File path (including filename) where the downloaded source tarball will be saved in the cache.
+        
         Returns:
-            Concatenated LaTeX content or None if unavailable
+            str or None: Concatenated contents of all `.tex` files extracted from the tarball, or `None` if the source is unavailable or extraction fails.
         """
         try:
             search = arxiv.Search(id_list=[arxiv_id])
@@ -300,13 +321,13 @@ class ArxivPaperFetcher:
 
     def _extract_latex_from_cache(self, latex_path: Path) -> Optional[str]:
         """
-        Extract LaTeX content from cached tarball.
-
-        Args:
-            latex_path: Path to source tarball
-
+        Extract and concatenate all `.tex` files from a cached LaTeX tarball.
+        
+        Parameters:
+            latex_path (Path): Path to the gzipped LaTeX source tarball.
+        
         Returns:
-            Concatenated LaTeX content or None if extraction fails
+            Optional[str]: Combined LaTeX content as a single string if one or more `.tex` files are found and readable; `None` if extraction fails, no `.tex` files are present, or files cannot be read.
         """
         import tarfile
         import tempfile

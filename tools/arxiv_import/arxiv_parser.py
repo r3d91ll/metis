@@ -160,17 +160,13 @@ class ArxivIdParser:
     @staticmethod
     def extract_date_from_version(version_str: str) -> datetime:
         """
-        Parse version creation date from arXiv metadata.
-
+        Parses an RFC 2822 date string from arXiv version metadata into a datetime.
+        
         Args:
-            version_str: Date string in RFC 2822 format
-
+            version_str: Date string in RFC 2822 format, e.g. "Mon, 2 Apr 2007 19:18:42 GMT".
+        
         Returns:
-            Parsed datetime object
-
-        Examples:
-            >>> ArxivIdParser.extract_date_from_version("Mon, 2 Apr 2007 19:18:42 GMT")
-            datetime.datetime(2007, 4, 2, 19, 18, 42, tzinfo=...)
+            A `datetime` representing the parsed date; timezone information is preserved when present.
         """
         # arXiv uses RFC 2822 format: "Mon, 2 Apr 2007 19:18:42 GMT"
         return parsedate_to_datetime(version_str)
@@ -178,16 +174,15 @@ class ArxivIdParser:
     @staticmethod
     def validate_temporal_ordering(parsed_ids: list[ParsedArxivId]) -> bool:
         """
-        Validate that internal IDs maintain temporal ordering.
-
-        Args:
-            parsed_ids: List of parsed arXiv IDs
-
+        Check that a list of ParsedArxivId implies non-decreasing year-month order when sorted by `internal_id`.
+        
+        Sorts the provided parsed IDs by their `internal_id` and verifies that the combined year-month value (year * 100 + month) does not decrease between consecutive entries.
+        
+        Parameters:
+            parsed_ids (list[ParsedArxivId]): Parsed arXiv IDs to validate; each item must contain `year` and `month`.
+        
         Returns:
-            True if internal IDs sort chronologically
-
-        Note:
-            This is critical for ensuring our internal ID scheme works correctly.
+            `true` if the sequence is non-decreasing by year-month after sorting by `internal_id`, `false` otherwise.
         """
         if len(parsed_ids) < 2:
             return True
@@ -212,14 +207,14 @@ class ArxivIdParser:
 
 def normalize_arxiv_id(arxiv_id: str) -> str:
     """
-    Convenience function to get internal ID from arXiv ID.
-
-    Args:
-        arxiv_id: Original arXiv ID
-
+    Produce the canonical internal arXiv identifier for a given arXiv ID.
+    
+    Parameters:
+        arxiv_id (str): Original arXiv identifier in either old (archive/YYMMNNN) or new (YYMM.NNNNN) format.
+    
     Returns:
-        Internal ID (format depends on old vs new)
-
+        internal_id (str): Canonical internal ID. For old-format inputs the result includes a sanitized archive prefix (archive_YYYYMM_SSSSS); for new-format inputs the result is YYYYMM_SSSSS.
+    
     Examples:
         >>> normalize_arxiv_id("hep-ph/9901001")
         'hep_ph_199901_00001'

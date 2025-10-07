@@ -35,7 +35,17 @@ class Word2VecFamilyProcessor:
     """Batch processor for Word2Vec family papers."""
 
     def __init__(self, config_path: Path):
-        """Initialize processor with configuration."""
+        """
+        Create a Word2VecFamilyProcessor configured from a YAML file.
+        
+        Reads configuration from the given path, initializes the Arxiv paper fetcher,
+        GitHub code fetcher, and experiment storage, and ensures required storage
+        collections exist.
+        
+        Parameters:
+            config_path (Path): Path to the YAML configuration file used to initialize
+                fetchers and storage.
+        """
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
@@ -55,16 +65,27 @@ class Word2VecFamilyProcessor:
         expected_repo: Optional[str] = None
     ) -> Dict[str, any]:
         """
-        Process a single paper: fetch, store, archive.
-
-        Args:
-            arxiv_id: arXiv identifier
-            title: Paper title
-            authors: List of author names
-            expected_repo: Known GitHub repo URL (optional)
-
+        Process a single paper through fetch, storage, and archival steps.
+        
+        Performs three ordered steps: fetch the paper (PDF/LaTeX/Markdown), attempt to locate and fetch associated GitHub code (optionally using a provided repo), and archive available source files. Records per-step status, timings, and any errors in the returned results dictionary.
+        
+        Parameters:
+            expected_repo (Optional[str]): If provided, treat this GitHub URL as the official repository and try it first; otherwise the code fetcher will attempt to discover an official repo.
+        
         Returns:
-            Processing results dictionary
+            dict: A results dictionary with at least the keys:
+                - `arxiv_id` (str): The arXiv identifier processed.
+                - `title` (str): Paper title.
+                - `paper_fetched` (bool): `true` if the paper was fetched and stored, `false` otherwise.
+                - `code_fetched` (bool): `true` if code was fetched and stored, `false` otherwise.
+                - `archived` (bool): `true` if source files were archived, `false` otherwise.
+                - `errors` (List[str]): List of error messages encountered during processing.
+                - `paper_time` (float): Time in seconds spent fetching the paper (present if `paper_fetched`).
+                - `code_time` (float): Time in seconds spent fetching code (present if `code_fetched`).
+                - `code_files` (int): Number of code files fetched (present if `code_fetched`).
+                - `code_lines` (int): Total lines of code fetched (present if `code_fetched`).
+                - `archive_path` (str): Path to the archived files (present if `archived`).
+                - `total_time` (float): Total time in seconds for the whole processing run.
         """
         logger.info("=" * 80)
         logger.info(f"Processing: {title}")
@@ -197,7 +218,14 @@ class Word2VecFamilyProcessor:
         return results
 
     def process_all(self) -> List[Dict[str, any]]:
-        """Process all papers in the Word2Vec family."""
+        """
+        Process every paper listed in the processor's configuration.
+        
+        Iterates over the configured papers, calls process_paper for each entry, and pauses briefly between papers to respect rate limits.
+        
+        Returns:
+            results (List[Dict[str, any]]): A list of per-paper result dictionaries containing processing metadata (e.g., fetch and archive statuses, timings, and errors).
+        """
         papers = self.config.get("papers", [])
         results = []
 
@@ -262,14 +290,25 @@ class Word2VecFamilyProcessor:
         logger.info("\n" + "=" * 80)
 
     def close(self):
-        """Clean up resources."""
+        """
+        Close and release external resources used by the processor.
+        
+        Specifically closes the storage backend, the arXiv paper fetcher, and the GitHub code fetcher.
+        """
         self.storage.close()
         self.paper_fetcher.close()
         self.code_fetcher.close()
 
 
 def main():
-    """Main entry point."""
+    """
+    Execute batch processing for the configured Word2Vec papers.
+    
+    Initializes a Word2VecFamilyProcessor using the module-local config.yaml, runs processing for all configured papers, prints a processing summary, and ensures processor resources are closed.
+    
+    Returns:
+        exit_code (int): 0 if every processed paper has `paper_fetched` set to `True`, 1 otherwise.
+    """
     config_path = Path(__file__).parent / "config.yaml"
     processor = Word2VecFamilyProcessor(config_path)
 

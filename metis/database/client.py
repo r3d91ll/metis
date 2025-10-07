@@ -58,6 +58,14 @@ class ArangoHttp2Client:
     """Minimal HTTP/2 ArangoDB client speaking over Unix sockets."""
 
     def __init__(self, config: ArangoHttp2Config) -> None:
+        """
+        Initialize the HTTP client for ArangoDB according to the provided configuration.
+        
+        Builds an httpx.Client configured from `config`: uses a Unix domain socket when `config.socket_path` is set (and disables HTTP/2 in that case), falls back to TCP otherwise (with HTTP/2 enabled), applies connect/read/write/pool timeouts, optional basic auth from `config.username`/`config.password`, and any pool limits from `config.pool_limits`.
+        
+        Parameters:
+            config (ArangoHttp2Config): Client configuration including database, socket_path (None to use TCP), base_url, credentials, timeouts, and pool limits.
+        """
         self._config = config
 
         # Support both Unix socket and TCP

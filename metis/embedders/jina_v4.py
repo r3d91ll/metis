@@ -33,6 +33,14 @@ class JinaV4Embedder(SentenceTransformersEmbedder):
     DEFAULT_MODEL = "jinaai/jina-embeddings-v4"
 
     def __init__(self, config: Optional[EmbeddingConfig] = None) -> None:
+        """
+        Initialize the JinaV4Embedder with Jina v4-specific defaults and enforced settings.
+        
+        If `config` is omitted or lacks a model_name, the embedder uses the class DEFAULT_MODEL; if a different model_name is provided it will be overridden to DEFAULT_MODEL. The constructor enables trust_remote_code to allow Jina's custom modules, calls the parent initializer with the resulting config, and forces the embedding dimensionality to 2048. It also sets sensible defaults for chunk_size_tokens (1024) and chunk_overlap_tokens (256) when not specified in the config.
+        
+        Parameters:
+            config (Optional[EmbeddingConfig]): Optional embedding configuration; if provided, its `model_name` may be replaced by the embedder's DEFAULT_MODEL and `trust_remote_code` will be set to True.
+        """
         if config is None:
             config = EmbeddingConfig(model_name=self.DEFAULT_MODEL)
         else:
@@ -57,11 +65,30 @@ class JinaV4Embedder(SentenceTransformersEmbedder):
         self.chunk_overlap_tokens = self.config.chunk_overlap_tokens or 256
 
     def _infer_embedding_dim(self, default: int) -> int:
-        """Override parent to always return 2048 for Jina v4."""
+        """
+        Always use 2048 as the embedding dimension for Jina v4 models.
+        
+        Parameters:
+            default (int): Ignored. Present for signature compatibility with the base class.
+        
+        Returns:
+            embedding_dim (int): The fixed embedding dimensionality (2048).
+        """
         return 2048
 
     def _load_model(self, model_name: str, device: str) -> SentenceTransformer:
-        """Override parent to set default_task for Jina v4."""
+        """
+        Load a SentenceTransformer instance configured for the Jina v4 embedder.
+        
+        Constructs and returns a SentenceTransformer using the given model name and device while:
+        - forcing `trust_remote_code=True` to allow Jina's custom modules,
+        - setting `model_kwargs={"default_task": "retrieval"}`,
+        - propagating `local_files_only` from `self.config` if present,
+        - using `self.config.cache_dir` as `cache_folder` when provided.
+        
+        Returns:
+            A configured SentenceTransformer instance.
+        """
         kwargs: Dict[str, Any] = {
             "device": device,
             "trust_remote_code": True,  # Required for Jina v4 custom code
@@ -80,6 +107,18 @@ class JinaV4Embedder(SentenceTransformersEmbedder):
         batch_size: Optional[int] = None,
         prompt_name: Optional[str] = None,
     ) -> np.ndarray:
+        """
+        Generate embeddings for a list of texts using the configured Jina v4 model.
+        
+        Parameters:
+            texts (List[str]): Input texts to embed.
+            task (str): Embedding task hint; determines default prompt type (e.g., contains "passage" selects passage prompt).
+            batch_size (Optional[int]): Number of texts to process per batch; if omitted, uses the embedder's configured batch size.
+            prompt_name (Optional[str]): Explicit prompt name to use; when omitted a prompt is chosen based on `task`.
+        
+        Returns:
+            np.ndarray: Array of embedding vectors with shape (len(texts), embedding_dimension) and dtype float32. For an empty `texts` list returns an array with shape (0, embedding_dimension).
+        """
         if not texts:
             return np.empty((0, self._dim), dtype=np.float32)
 

@@ -27,11 +27,16 @@ logger = logging.getLogger(__name__)
 
 def generate_all_embeddings(config_path: Path, device: str = "cuda"):
     """
-    Generate embeddings for all Word2Vec family papers.
-
-    Args:
-        config_path: Path to config.yaml
-        device: Compute device (cuda/cpu)
+    Generate Jina v4 embeddings for all papers listed in a YAML configuration and store them in the ArangoDB experiment collection.
+    
+    Loads the config at config_path, iterates the configured papers, builds a combined context (including LaTeX), produces a Jina v4 embedding with metadata for each paper, ensures the target "cf_embeddings" collection exists, and inserts or replaces the embedding document in the database. Processing results are aggregated into a final summary that is logged.
+    
+    Parameters:
+        config_path (Path): Path to the YAML configuration file that contains the `papers` list and storage settings.
+        device (str): Compute device to use for embedding generation (e.g., "cuda" or "cpu").
+    
+    Returns:
+        bool: `true` if embeddings were successfully generated and stored for every configured paper, `false` otherwise.
     """
     # Load configuration
     with open(config_path) as f:
@@ -213,7 +218,14 @@ def generate_all_embeddings(config_path: Path, device: str = "cuda"):
 
 
 def main():
-    """Main entry point."""
+    """
+    Run the CLI that parses device selection and invokes embedding generation using the adjacent config.yaml.
+    
+    Parses a --device argument (choices: "cuda", "cpu"), constructs the config.yaml path next to the script, and calls generate_all_embeddings with those settings.
+    
+    Returns:
+        exit_code (int): 0 on success, 1 on failure.
+    """
     import argparse
 
     parser = argparse.ArgumentParser(

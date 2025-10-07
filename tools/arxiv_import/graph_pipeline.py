@@ -56,7 +56,18 @@ class ArxivGraphPipeline:
     """
 
     def __init__(self, config_path: Path):
-        """Initialize pipeline with configuration."""
+        """
+        Create an ArxivGraphPipeline configured from a YAML file.
+        
+        Parameters:
+            config_path (Path): Path to a YAML configuration file containing at least
+                a `database` section with `name` and `socket_path`; optional `graph`
+                section is read into `self.graph_config`.
+        
+        Description:
+            Loads the YAML configuration, resolves and stores `self.db_config` for
+            connecting to ArangoDB, and stores the parsed configuration on `self.config`.
+        """
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
@@ -156,6 +167,13 @@ class ArxivGraphPipeline:
 
 
 def main():
+    """
+    Parse command-line arguments and run the arXiv graph export pipeline.
+    
+    Supports the following CLI options: --config (path to YAML config), --output (optional override for output file),
+    --val-ratio (validation split fraction), and --seed (random seed for reproducibility). The function constructs
+    an ArxivGraphPipeline from the provided config, executes export_graph with the parsed options, and logs the saved path.
+    """
     parser = argparse.ArgumentParser(description='Export arXiv graph to PyG Data format')
     parser.add_argument(
         '--config',

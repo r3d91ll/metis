@@ -26,7 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 def test_word2vec_paper():
-    """Test processing of Word2Vec paper (1301.3781)."""
+    """
+    Orchestrates end-to-end fetching and storage of the Word2Vec arXiv paper (ID 1301.3781) to validate Phase 1 processing.
+    
+    Loads configuration, prepares the cache directory, initializes the ArxivPaperFetcher and CFExperimentStorage, ensures required database collections exist, fetches the paper from arXiv, stores the paper markdown and metadata in the database, verifies retrieval, logs progress and statistics, and closes storage.
+    
+    Returns:
+        True if all steps completed successfully and the stored paper was verified, False otherwise.
+    """
 
     # Load configuration
     config_path = Path(__file__).parent / "config.yaml"

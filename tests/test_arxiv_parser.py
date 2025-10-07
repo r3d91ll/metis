@@ -301,7 +301,11 @@ class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
     def test_year_2000_transition(self):
-        """Test Y2K boundary."""
+        """
+        Verify parsing and chronological ordering across the 1999→2000 boundary for old-format arXiv IDs.
+        
+        Asserts that a December 1999 old-format ID and a January 2000 old-format ID produce the correct years and that the generated internal IDs sort chronologically (December 1999 < January 2000).
+        """
         dec_1999 = ArxivIdParser.parse("hep-ph/9912001")
         jan_2000 = ArxivIdParser.parse("hep-ph/0001001")
 
@@ -344,7 +348,11 @@ class TestInternalIdFormat:
         assert len(new_parsed.internal_id) == 12  # YYYYMM_SSSSS format
 
     def test_id_components(self):
-        """Test internal ID components are correct."""
+        """
+        Verify that the parsed internal_id contains two components: a six-digit YYYYMM and a five-digit sequence.
+        
+        Asserts that parsing "2301.12345" produces internal_id of the form "202301_12345", where the first part is length 6 and the second part is length 5.
+        """
         parsed = ArxivIdParser.parse("2301.12345")
         parts = parsed.internal_id.split("_")
 

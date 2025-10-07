@@ -47,7 +47,21 @@ logger = logging.getLogger(__name__)
 
 
 def parse_chunk(raw_lines, created_at_timestamp):
-    """Parse a chunk of JSON lines (runs in separate process)."""
+    """
+    Parse a list of raw JSON lines representing arXiv papers into structured documents for storage and embedding.
+    
+    Parameters:
+        raw_lines (Iterable[str]): Iterable of JSON-encoded paper records, one per line.
+        created_at_timestamp (str): ISO-8601 timestamp to set as the `created_at` value on metadata documents.
+    
+    Returns:
+        tuple:
+            docs (List[dict]): Parsed documents where each item is a dict with keys:
+                - "metadata": dict with fields `_key`, `arxiv_id`, `authors`, `categories`, `primary_category`, `year`, `month`, `year_month`, `created_at`.
+                - "abstract": dict with fields `_key`, `arxiv_id`, `title`, `abstract`.
+                - "embedding": dict with fields `_key`, `arxiv_id`, `title`, `abstract`, `combined_text` (precomputed title + abstract).
+            errors (int): Number of lines that failed to parse.
+    """
     from arxiv_parser import ArxivIdParser
     import json
 
@@ -119,8 +133,9 @@ def postprocess_worker(
     stop_event: Any,
 ):
     """
-    CPU worker process - normalizes embeddings and converts to lists.
-    Runs in parallel with storage to prevent bottleneck.
+    Normalize embedding arrays in each incoming batch and convert them to JSON-serializable lists.
+    
+    Reads batches from `input_queue` until `stop_event` is set or a `None` poison pill is received. For each document in a batch, L2-normalizes any of `title_embedding`, `abstract_embedding`, and `combined_embedding` that are present and converts NumPy arrays to Python lists, then removes temporary fields `combined_text`, `title`, and `abstract`. Processed batches are put onto `output_queue`.
     """
     import numpy as np
     batches_processed = 0
@@ -179,9 +194,21 @@ def embedding_worker(
     multi_gpu: bool
 ):
     """
-    GPU worker process - generates embeddings.
-
-    Sets CUDA_VISIBLE_DEVICES before any CUDA imports.
+    Run a GPU worker process that produces embeddings for batches of parsed documents.
+    
+    This process sets CUDA_VISIBLE_DEVICES before importing CUDA-dependent libraries, initializes a model-backed embedder on the isolated GPU, consumes batches from input_queue, attaches title/abstract/combined embeddings (NumPy arrays) to each document, and forwards processed batches to output_queue. The worker exits on a poison pill (None) from input_queue or when stop_event is set.
+    
+    Parameters:
+        worker_id (int): Numeric id for logging and identification of this worker.
+        gpu_id (int): Host GPU index to expose to this process via CUDA_VISIBLE_DEVICES.
+        input_queue (mp.Queue): Queue from which batches of parsed documents are received.
+        output_queue (mp.Queue): Queue to which batches with attached embeddings are sent.
+        stop_event (Any): Multiprocessing/shutdown event used to request graceful termination.
+        config (dict): Configuration dictionary; expects an 'embeddings' mapping with keys
+            like 'batch_size', 'use_fp16', 'max_length', 'chunk_size_tokens', 'chunk_overlap_tokens',
+            and optional 'combined_only'.
+        multi_gpu (bool): When True, select a multi-GPU-compatible model backend; when False,
+            use the single-GPU backend configuration.
     """
     # CRITICAL: Set GPU BEFORE any imports that may pull in torch/transformers
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
@@ -300,7 +327,17 @@ def storage_worker(
     chunk_sizes: dict | None = None,
 ):
     """
-    Storage thread - writes batches to database.
+    Consume processed batches from `output_queue` and bulk-import their documents into the ArangoDB collections defined by `collections_config`.
+    
+    The worker reads batches until it receives a poison pill (`None`) or `stop_event` is set and the queue is drained. For each batch it performs sequential bulk imports for papers (metadata), abstracts, and embeddings to preserve cross-collection consistency, updates `stats_dict['total_created']` with the number of metadata records inserted, and logs progress. Import chunk sizes may be overridden via `chunk_sizes`. Exceptions are logged and cause the worker to stop gracefully.
+    
+    Parameters:
+        output_queue (mp.Queue): Queue providing lists of processed document dicts with keys 'metadata', 'abstract', and 'embedding'.
+        stop_event (Any): Event-like object used to signal graceful shutdown.
+        db_config (Any): Configuration passed to ArangoClient to connect to the database.
+        collections_config (dict): Mapping with keys 'papers', 'abstracts', and 'embeddings' naming target collections.
+        stats_dict (dict): Multiprocess-shared dict; the worker increments `stats_dict['total_created']` by the number of imported metadata documents.
+        chunk_sizes (dict | None): Optional per-collection import chunk sizes; expected keys: 'papers', 'abstracts', 'embeddings'. Defaults are used when keys are missing.
     """
     print(f"Storage worker starting, PID {os.getpid()}")
 
@@ -374,6 +411,16 @@ class MultiGPUArxivImporter:
     """
 
     def __init__(self, config_path: Path, num_workers: int = 1, gpu_ids: Optional[list[int]] = None):
+        """
+        Initialize the MultiGPUArxivImporter instance and configure the import pipeline.
+        
+        Reads the YAML configuration at config_path, resolves database connection settings, initializes multiprocessing spawn-context queues and synchronization primitives, creates a shared stats dictionary, records worker and GPU configuration, and caches a creation timestamp used for all ingested papers.
+        
+        Parameters:
+            config_path (Path): Path to the YAML configuration file describing data source, import options, and database settings.
+            num_workers (int): Desired number of embedding worker processes (ignored in single-GPU mode).
+            gpu_ids (Optional[list[int]]): List of GPU IDs to enable multi-GPU mode; when provided, multi-GPU behavior is enabled and these IDs are used to spawn GPU workers.
+        """
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
@@ -432,7 +479,11 @@ class MultiGPUArxivImporter:
         self.created_at_timestamp = datetime.now(timezone.utc).isoformat()
 
     def create_database_if_needed(self):
-        """Create database via Unix socket if it doesn't exist."""
+        """
+        Check for the configured ArangoDB database over a Unix-domain socket and create it if missing.
+        
+        This function queries ArangoDB via an HTTP-over-UDS transport using the socket path from config, the ARANGO_RW_SOCKET environment variable, or the default '/run/metis/readwrite/arangod.sock'. It uses ARANGO_USERNAME and ARANGO_PASSWORD from the environment (defaults: 'root' and empty password) to list existing databases and, if the configured database name is not present, attempts to create it. Outcomes and errors are reported via printed messages; the function handles exceptions internally and does not raise on failure.
+        """
         import httpx
         import os
 
@@ -513,7 +564,15 @@ class MultiGPUArxivImporter:
         print("Database setup complete")
 
     def start_workers(self):
-        """Start GPU workers and storage thread."""
+        """
+        Start embedding, postprocessing, and storage workers for the import pipeline.
+        
+        Detects available GPUs, validates requested GPU IDs and worker counts, spawns one embedding process per assigned GPU, starts multiple CPU postprocess processes, and starts the storage thread that writes batches to the database.
+        
+        Raises:
+            RuntimeError: If GPUs cannot be detected (e.g., `nvidia-smi` not found or no GPUs available).
+            ValueError: If requested `gpu_ids` contain IDs not present on the system or if `--multi-gpu` is used with a `num_workers` value that does not equal the number of selected GPUs.
+        """
         # Detect GPUs using nvidia-smi (avoid importing torch in parent process)
         import subprocess
         try:
@@ -587,7 +646,15 @@ class MultiGPUArxivImporter:
         print("Started storage worker")
 
     def read_and_process_papers(self, limit: Optional[int] = None, skip: int = 0):
-        """Read papers and push to input queue."""
+        """
+        Load papers from the configured data file, parse them into document batches, enqueue batches for GPU workers, and send termination signals.
+        
+        Reads raw JSON lines from the data file (optionally skipping the first `skip` lines and limiting to `limit` lines), parses the loaded lines in parallel using a process pool to produce metadata/abstract/embedding documents, places the resulting documents onto the importer input queue in batches of `self.batch_size`, and finally places one `None` poison pill per embedding worker to signal completion.
+        
+        Parameters:
+            limit (Optional[int]): Maximum number of papers to read from the file. If None, read all remaining papers after `skip`.
+            skip (int): Number of initial lines to skip before reading.
+        """
         print(f"Reading papers from {self.data_file}")
         if skip > 0:
             print(f"Skipping first {skip:,} papers")
@@ -667,7 +734,19 @@ class MultiGPUArxivImporter:
         print(f"Total papers ready for processing: {len(all_docs):,}")
 
     def process_paper(self, paper: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Transform paper JSON into document structure."""
+        """
+        Convert a single arXiv paper JSON into three document dictionaries for storage.
+        
+        Parameters:
+            paper (dict): Raw paper JSON containing at least the `id` field. Optional fields used: `title`, `abstract`, `categories`, and `authors`.
+        
+        Returns:
+            dict or None: A dictionary with keys `metadata`, `abstract`, and `embedding`:
+                - `metadata`: document with `_key`, `arxiv_id`, `authors`, `categories`, `primary_category`, `year`, `month`, `year_month`, and `created_at`.
+                - `abstract`: document with `_key`, `arxiv_id`, `title`, and `abstract`.
+                - `embedding`: document with `_key`, `arxiv_id`, `title_embedding` (None), `abstract_embedding` (None), and `combined_embedding` (None).
+            Returns `None` if processing fails.
+        """
         try:
             parsed = ArxivIdParser.parse(paper['id'])
 
@@ -719,7 +798,11 @@ class MultiGPUArxivImporter:
             return None
 
     def shutdown_workers(self):
-        """Clean shutdown of workers and storage."""
+        """
+        Gracefully stop GPU, postprocess, and storage workers, waiting for clean exits and force-terminating unresponsive workers.
+        
+        This method waits for GPU worker processes to exit (with timeouts and forced termination if needed), sends poison pills to postprocess workers and waits for their termination (with timeouts and forced termination if needed), and signals the storage thread to stop and drain remaining batches before joining it. It reports final queue sizes and prints warnings for any workers or thread that do not exit cleanly.
+        """
         print("Shutting down workers...")
 
         # Wait for GPU workers to finish
@@ -760,11 +843,34 @@ class MultiGPUArxivImporter:
         print("All workers stopped")
 
     def run(self, limit: Optional[int] = None, skip: int = 0, setup_db: bool = True):
-        """Run the multi-GPU import pipeline."""
+        """
+        Orchestrates the end-to-end multi-GPU import pipeline: optional database setup, worker lifecycle, paper processing, and graceful shutdown.
+        
+        Parameters:
+            limit (Optional[int]): Maximum number of papers to import; `None` to process all available papers.
+            skip (int): Number of initial papers to skip before importing.
+            setup_db (bool): If True, ensure the database and collections are created before starting workers.
+        
+        Returns:
+            result (dict): Summary statistics with keys:
+                - 'total_created' (int): Number of papers successfully inserted.
+                - 'total_errors' (int): Number of errors encountered during processing.
+                - 'duration' (float): Total run time in seconds.
+                - 'throughput' (float): Papers created per second.
+        """
         start_time = time.time()
 
         # Register signal handlers for graceful shutdown
         def signal_handler(signum, frame):
+            """
+            Initiate a graceful shutdown in response to an OS signal and send termination markers to workers.
+            
+            Sets the instance stop event to request shutdown and enqueues a poison pill (None) into the input queue once per worker to signal them to exit.
+            
+            Parameters:
+                signum (int): The signal number received.
+                frame (types.FrameType | None): Current stack frame (provided by the signal handler), may be None.
+            """
             print(f"\nReceived signal {signum}, initiating graceful shutdown...")
             self.stop_event.set()
             # Send poison pills to workers
@@ -812,6 +918,11 @@ class MultiGPUArxivImporter:
 
 
 def main():
+    """
+    Command-line entry point that parses arguments and runs the multi-GPU arXiv import pipeline.
+    
+    Parses CLI options (--config, --limit, --skip, --workers, --multi-gpu, --no-setup), prints a run header, constructs a MultiGPUArxivImporter with the provided options, executes the import run, prints final statistics (imported count, duration, throughput), and exits the process with status code 0.
+    """
     parser = argparse.ArgumentParser(description='arXiv import pipeline (single-GPU by default, optional multi-GPU)')
     parser.add_argument(
         '--config',
