@@ -186,12 +186,14 @@ python -m tools.backup.cli restore metis_20251007_143022_before_cf_validation_ph
 ## When to Use Each
 
 ### Use DR Backup When:
+
 - Hardware failure or disk corruption
 - Complete system restore needed
 - Rolling back all databases to a known state
 - Scheduled maintenance/upgrades
 
 ### Use Operational Snapshot When:
+
 - Starting an experiment that modifies data
 - Testing schema changes on one database
 - Need to rollback without affecting other databases

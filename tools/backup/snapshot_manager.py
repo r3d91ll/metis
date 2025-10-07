@@ -262,9 +262,10 @@ class SnapshotManager:
             metadata = SnapshotMetadata.from_dict(json.load(f))
 
         # Check if compressed
+        temp_root: Optional[Path] = None
         if metadata.compression:
             logger.info(f"Decompressing snapshot ({metadata.compression})...")
-            snapshot_path = self._decompress_snapshot(snapshot_path, metadata)
+            snapshot_path, temp_root = self._decompress_snapshot(snapshot_path, metadata)
 
         try:
             # Restore database
@@ -289,10 +290,12 @@ class SnapshotManager:
             logger.info(f"  Total documents: {sum(metadata.collections.values())}")
 
             return True
-
         except Exception as e:
             logger.error(f"Restoration failed: {e}")
             raise SnapshotError(f"Failed to restore snapshot: {e}") from e
+        finally:
+            if temp_root and temp_root.exists():
+                shutil.rmtree(temp_root)
 
     def delete_snapshot(
         self,
@@ -331,6 +334,9 @@ class SnapshotManager:
         # Delete snapshot directory
         try:
             shutil.rmtree(snapshot_path)
+            archive_path = snapshot_path.with_name(f"{snapshot_name}.tar.gz")
+            if archive_path.exists():
+                archive_path.unlink()
             logger.info(f"✓ Snapshot deleted: {snapshot_name}")
             return True
         except Exception as e:
@@ -381,10 +387,9 @@ class SnapshotManager:
 
         # Determine what to delete
         for snapshot in non_permanent:
-            if snapshot.snapshot_name not in to_keep:
-                snap_date = datetime.fromisoformat(snapshot.timestamp)
-                if snap_date < three_months_ago:
-                    to_delete.append(snapshot.snapshot_name)
+            if snapshot.snapshot_name in to_keep:
+                continue
+            to_delete.append(snapshot.snapshot_name)
 
         # Compress old snapshots
         to_compress = []
@@ -573,7 +578,7 @@ class SnapshotManager:
             return
 
         # Create tar.gz archive
-        archive_path = snapshot_path.with_suffix(".tar.gz")
+        archive_path = snapshot_path.with_name(f"{snapshot_name}.tar.gz")
         with tarfile.open(archive_path, "w:gz") as tar:
             tar.add(snapshot_path, arcname=snapshot_name)
 
@@ -595,26 +600,28 @@ class SnapshotManager:
 
     def _decompress_snapshot(
         self, snapshot_path: Path, metadata: SnapshotMetadata
-    ) -> Path:
+    ) -> tuple[Path, Optional[Path]]:
         """
         Decompress a snapshot for restoration.
 
         Returns:
-            Path to decompressed snapshot directory
+            Tuple of (path to decompressed snapshot directory, temp directory to cleanup)
         """
         if metadata.compression == "tar.gz":
-            archive_path = snapshot_path.with_suffix(".tar.gz")
+            archive_path = self.snapshot_root / f"{metadata.snapshot_name}.tar.gz"
             if not archive_path.exists():
                 raise SnapshotError(f"Compressed archive not found: {archive_path}")
 
             # Extract to temporary location
             temp_dir = self.snapshot_root / f"{metadata.snapshot_name}_temp"
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
             with tarfile.open(archive_path, "r:gz") as tar:
                 tar.extractall(path=temp_dir)
 
-            return temp_dir / metadata.snapshot_name
+            return temp_dir / metadata.snapshot_name, temp_dir
 
-        return snapshot_path
+        return snapshot_path, None
 
     def _get_git_info(self) -> tuple[Optional[str], Optional[str]]:
         """Get current git commit and branch."""

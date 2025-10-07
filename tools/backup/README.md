@@ -59,7 +59,8 @@ python -m tools.backup.cli list --verbose
 ```
 
 Example output:
-```
+
+```text
 Found 3 snapshot(s):
 
 📌 metis_20251007_143022_production_baseline [compressed]
@@ -215,6 +216,7 @@ python -m tools.backup.cli restore metis_20251007_120000_before_schema_migration
 - Excludes: `.tmp`, `__pycache__`, `.git`
 
 **Metadata (JSON file):**
+
 ```json
 {
   "snapshot_name": "metis_20251007_143022_before_cf_validation_phase_4",
@@ -257,7 +259,7 @@ When creating a new snapshot or running `cleanup`, the system:
 
 Snapshots are stored in `/bulk-store/metis/snapshots/`:
 
-```
+```text
 /bulk-store/metis/snapshots/
 ├── metis_20251007_143022_production_baseline/
 │   ├── metadata.json              # Snapshot metadata
@@ -337,6 +339,7 @@ A snapshot with the same timestamp already exists. Wait a second and try again, 
 ### "arangodump not found"
 
 Install ArangoDB tools:
+
 ```bash
 # Ubuntu/Debian
 sudo apt-get install arangodb3-client
@@ -345,6 +348,7 @@ sudo apt-get install arangodb3-client
 ### "Permission denied" on socket
 
 Ensure your user is in the `metis` group:
+
 ```bash
 sudo usermod -aG metis $USER
 # Log out and back in

@@ -6,16 +6,12 @@ Run with: pytest tests/tools/test_snapshot_manager.py -v
 
 import json
 import shutil
-import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from tools.backup.snapshot_manager import (
     SnapshotError,
@@ -49,7 +45,7 @@ def mock_manager(temp_dirs):
     """Create SnapshotManager with mocked database operations."""
     manager = SnapshotManager(
         db_name="test_db",
-        db_socket="/tmp/test.sock",
+        db_endpoint="http://127.0.0.1:8529",
         db_username="test",
         db_password="test",
         snapshot_root=temp_dirs["snapshot_root"],
@@ -116,7 +112,7 @@ class TestSnapshotMetadata:
             compression="gzip",
         )
 
-        data = metadata.__dict__
+        data = metadata.to_dict()
         assert data["permanent"] is True
         assert data["compression"] == "gzip"
 
@@ -363,7 +359,7 @@ class TestRetentionPolicy:
         )
 
         metadata_file = snapshot_dir / "metadata.json"
-        metadata_file.write_text(json.dumps(metadata.__dict__, indent=2))
+        metadata_file.write_text(json.dumps(metadata.to_dict(), indent=2))
 
     def test_retention_keeps_last_10(self, mock_manager):
         """Test that retention policy keeps last 10 snapshots."""
@@ -506,11 +502,15 @@ class TestCompression:
         metadata = SnapshotMetadata.from_dict(metadata_dict)
 
         # Decompress
-        decompressed_path = mock_manager._decompress_snapshot(snapshot_dir, metadata)
+        decompressed_path, temp_root = mock_manager._decompress_snapshot(snapshot_dir, metadata)
 
         # Verify directory exists
         assert decompressed_path.exists()
         assert (decompressed_path / "metadata.json").exists()
+
+        # Cleanup temp directory
+        if temp_root and temp_root.exists():
+            shutil.rmtree(temp_root)
 
 
 class TestEdgeCases:

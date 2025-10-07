@@ -178,7 +178,7 @@ def delete_snapshot_cmd(args: argparse.Namespace) -> int:
                 print("Deletion cancelled.")
                 return 0
 
-        manager.delete_snapshot(args.snapshot_name)
+        manager.delete_snapshot(args.snapshot_name, force=args.force)
         print(f"✓ Snapshot deleted: {args.snapshot_name}")
         return 0
 

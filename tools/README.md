@@ -6,7 +6,7 @@ Production infrastructure and data processing tools for the Metis semantic knowl
 
 ### `backup/`
 
-**Snapshot manager for ArangoDB and bulk storage backup/restore**
+#### Snapshot manager for ArangoDB and bulk storage backup/restore
 
 Comprehensive backup system enabling safe experimentation with rollback capability.
 
@@ -18,6 +18,7 @@ Comprehensive backup system enabling safe experimentation with rollback capabili
 - Git commit/branch tracking
 
 **Quick Start:**
+
 ```bash
 # Take snapshot
 python -m tools.backup.cli create "Before experiment"
