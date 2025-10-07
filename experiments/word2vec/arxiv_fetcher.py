@@ -64,7 +64,15 @@ class ArxivPaperFetcher:
                 self.extractor.use_fallback = True
         else:
             self.extractor = extractor
-        self.cache_dir = cache_dir or Path("/tmp/arxiv_cache")
+
+        # Convert cache_dir to Path if it's a string
+        if cache_dir is None:
+            self.cache_dir = Path("/tmp/arxiv_cache")
+        elif isinstance(cache_dir, str):
+            self.cache_dir = Path(cache_dir)
+        else:
+            self.cache_dir = cache_dir
+
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.max_retries = max_retries
         self.client = arxiv.Client()
@@ -249,6 +257,11 @@ class ArxivPaperFetcher:
 
         except Exception as e:
             raise RuntimeError(f"Failed to extract markdown from {pdf_path}: {e}")
+
+    def close(self):
+        """Close the fetcher (cleanup if needed)."""
+        # No cleanup needed for ArxivPaperFetcher
+        pass
 
 
 # Convenience function

@@ -46,10 +46,59 @@ fetching:
     max_results_per_search: 10
 
   code:
+    # File selection for semantic embedding
+    # ONLY include pure implementation code - no docs, tests, or examples
     max_files: 50
-    max_file_size: 1048576  # 1MB
-    include_extensions: [".py", ".c", ".cpp", ".h", ".md", ".txt"]
-    exclude_patterns: ["test", "__pycache__", ".git", "docs"]
+    max_file_size: 1048576  # 1MB per file
+
+    # Include ONLY code files (no markdown, no text files)
+    include_extensions:
+      - ".py"      # Python
+      - ".c"       # C
+      - ".cpp"     # C++
+      - ".cc"      # C++
+      - ".h"       # C/C++ headers
+      - ".hpp"     # C++ headers
+      - ".java"    # Java
+      - ".js"      # JavaScript
+      - ".ts"      # TypeScript
+      - ".go"      # Go
+      - ".rs"      # Rust
+
+    # Exclude patterns (tests, docs, examples, configs)
+    exclude_patterns:
+      # Test directories and files
+      - "test"
+      - "tests"
+      - "testing"
+      - "_test"
+      - "test_"
+      - "spec"
+      # Documentation
+      - "doc"
+      - "docs"
+      - "documentation"
+      # Examples and demos
+      - "example"
+      - "examples"
+      - "demo"
+      - "demos"
+      - "sample"
+      # Build and config
+      - "setup"
+      - "build"
+      - "dist"
+      - "node_modules"
+      - "__pycache__"
+      - ".git"
+      - ".github"
+      # Non-code files
+      - ".md"
+      - ".txt"
+      - ".rst"
+      - "README"
+      - "LICENSE"
+      - "CONTRIBUTING"
 
 embeddings:
   model: "jinaai/jina-embeddings-v4"
