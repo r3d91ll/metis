@@ -1,0 +1,94 @@
+# Word2Vec CF Validation Experiment Configuration
+experiment:
+  name: "word2vec_cf_validation"
+  version: "1.0"
+  hypothesis: "Embedding paper adoption follows α ∈ [1.5, 2.0]"
+
+papers:
+  - arxiv_id: "1301.3781"
+    title: "Efficient Estimation of Word Representations in Vector Space"
+    authors: ["Tomas Mikolov", "Kai Chen", "Greg Corrado", "Jeffrey Dean"]
+    expected_repo: "https://github.com/tmikolov/word2vec"
+
+  - arxiv_id: "1405.4053"
+    title: "Distributed Representations of Sentences and Documents"
+    authors: ["Quoc Le", "Tomas Mikolov"]
+
+  - arxiv_id: "1504.06654"
+    title: "GloVe: Global Vectors for Word Representation"
+    authors: ["Jeffrey Pennington", "Richard Socher", "Christopher Manning"]
+
+  - arxiv_id: "1607.04606"
+    title: "Enriching Word Vectors with Subword Information"
+    authors: ["Piotr Bojanowski", "Edouard Grave", "Armand Joulin", "Tomas Mikolov"]
+
+  - arxiv_id: "1607.00653"
+    title: "node2vec: Scalable Feature Learning for Networks"
+    authors: ["Aditya Grover", "Jure Leskovec"]
+
+infrastructure:
+  cache_dir: "data/experiments/word2vec/cache"
+  temp_dir: "/tmp/word2vec_cf"
+  log_level: "INFO"
+
+fetching:
+  arxiv:
+    max_retries: 3
+    retry_delay: 5
+    timeout: 30
+
+  github:
+    token_env: "GITHUB_TOKEN"
+    search_strategies:
+      - "arxiv_id_in_readme"
+      - "author_match"
+      - "title_similarity"
+    max_results_per_search: 10
+
+  code:
+    max_files: 50
+    max_file_size: 1048576  # 1MB
+    include_extensions: [".py", ".c", ".cpp", ".h", ".md", ".txt"]
+    exclude_patterns: ["test", "__pycache__", ".git", "docs"]
+
+embeddings:
+  model: "jinaai/jina-embeddings-v4"
+  device: "cuda:0"
+  batch_size: 8
+  max_context_tokens: 32000
+  chunk_size_tokens: 8000
+  chunk_overlap_tokens: 1000
+  use_fp16: true
+
+database:
+  name: "arxiv_datastore"  # Reuse existing database
+  # Use Unix socket for optimal performance (0.4ms p50 latency vs TCP overhead)
+  socket_path: "/run/metis/readwrite/arangod.sock"
+
+  collections:
+    papers: "arxiv_markdown"
+    code: "arxiv_code"
+    embeddings: "arxiv_embeddings"
+
+  batch_sizes:
+    papers: 10
+    code: 10
+    embeddings: 100
+
+quality:
+  min_markdown_length: 1000
+  min_code_files: 3
+  required_paper_sections: ["abstract"]
+  max_embedding_dimension_deviation: 0
+
+monitoring:
+  progress_bar: true
+  log_to_file: true
+  log_file: "logs/word2vec_cf_{timestamp}.log"
+  checkpoint_interval: 1  # Save progress after each paper
+
+output:
+  results_file: "results/word2vec_cf_validation.json"
+  metrics_file: "results/word2vec_cf_metrics.csv"
+  visualization: false  # Disable for now
+  visualization_file: "results/word2vec_cf_embeddings.html"
