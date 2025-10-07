@@ -2,6 +2,22 @@
 
 Backup and restore system for ArangoDB databases and bulk storage files. Enables safe experimentation with rollback capability.
 
+## Quick Start
+
+```bash
+# Take a snapshot before starting work
+python -m tools.backup.cli create "Before CF validation Phase 4"
+
+# List all snapshots
+python -m tools.backup.cli list
+
+# Restore if needed
+python -m tools.backup.cli restore metis_20251007_143022_before_cf_validation_phase_4
+
+# Cleanup old snapshots
+python -m tools.backup.cli cleanup --dry-run
+```
+
 ## Features
 
 - **Full System Snapshots**: Backs up both ArangoDB collections and bulk storage files
@@ -95,6 +111,127 @@ python -m tools.backup.cli cleanup --dry-run
 
 # Apply cleanup
 python -m tools.backup.cli cleanup
+```
+
+## Common Workflows
+
+### Workflow 1: Safe Experimentation
+
+Use this workflow when running experiments that modify your database:
+
+```bash
+# 1. Take a snapshot before starting
+python -m tools.backup.cli create "Before CF validation Phase 4 - clean baseline"
+
+# Output:
+# ✓ Snapshot created: metis_20251007_143022_before_cf_validation_phase_4_clean_baseline
+#   Collections: 15000 documents
+#   Database: 250.5 MB
+#   Bulk storage: 1200.3 MB
+#   Git: feature/case-study-data-collection@5a49f37
+
+# 2. Run your experiments
+cd experiments/word2vec
+python cf_validation_phase4.py
+
+# 3a. If experiments succeed, mark the result
+python -m tools.backup.cli create "After Phase 4 - results validated" --permanent
+
+# 3b. If experiments fail or data is corrupted, restore
+python -m tools.backup.cli list  # Find the snapshot name
+python -m tools.backup.cli restore metis_20251007_143022_before_cf_validation_phase_4_clean_baseline
+
+# Confirmation prompt will show:
+# Restore snapshot: metis_20251007_143022_before_cf_validation_phase_4_clean_baseline
+#   Description: Before CF validation Phase 4 - clean baseline
+#   Created: 2025-10-07T14:30:22
+#   Collections: 15000 documents
+#   Database: 250.5 MB
+#   Bulk storage: 1200.3 MB
+#
+# ⚠️  WARNING: This will REPLACE current database and bulk storage!
+# Type 'yes' to confirm restoration: yes
+#
+# Restoring snapshot...
+# ✓ Snapshot restored successfully
+```
+
+### Workflow 2: Production Baselines
+
+Create permanent snapshots at major milestones:
+
+```bash
+# After completing Word2Vec data collection
+python -m tools.backup.cli create "Word2Vec dataset complete - 5 papers + code" --permanent
+
+# Before starting new research direction
+python -m tools.backup.cli create "Baseline before Transformer analysis" --permanent
+
+# List permanent snapshots
+python -m tools.backup.cli list | grep 📌
+```
+
+### Workflow 3: Daily Development
+
+Quick snapshots for day-to-day work:
+
+```bash
+# Morning: Take snapshot before starting work
+python -m tools.backup.cli create "Daily backup $(date +%Y%m%d)"
+
+# End of day: Review what was created
+python -m tools.backup.cli list | head -5
+
+# Weekly: Cleanup old snapshots
+python -m tools.backup.cli cleanup --dry-run
+python -m tools.backup.cli cleanup
+```
+
+### Workflow 4: Database-Only Operations
+
+When bulk storage hasn't changed, snapshot just the database:
+
+```bash
+# Database-only snapshot (faster)
+python -m tools.backup.cli create "Before schema migration" --no-bulk
+
+# Restore database only
+python -m tools.backup.cli restore metis_20251007_120000_before_schema_migration --no-bulk
+```
+
+## What Gets Backed Up
+
+**Database (via arangodump):**
+
+- All collections in your ArangoDB database (default: `arxiv_datastore`)
+- Document counts per collection
+- Indexes and graph structures
+- Collection metadata
+
+**Bulk Storage (via rsync):**
+
+- `/bulk-store/metis/experiments/` directory
+- All paper sources, code repositories, embeddings
+- Excludes: `.tmp`, `__pycache__`, `.git`
+
+**Metadata (JSON file):**
+```json
+{
+  "snapshot_name": "metis_20251007_143022_before_cf_validation_phase_4",
+  "timestamp": "2025-10-07T14:30:22",
+  "description": "Before CF validation Phase 4 - clean baseline",
+  "git_commit": "5a49f37abc123...",
+  "git_branch": "feature/case-study-data-collection",
+  "permanent": false,
+  "collections": {
+    "arxiv_markdown": 5,
+    "arxiv_code": 5,
+    "cf_embeddings": 5
+  },
+  "bulk_store_size_mb": 1200.3,
+  "database_size_mb": 250.5,
+  "compression": null
+}
 ```
 
 ## Retention Policy
