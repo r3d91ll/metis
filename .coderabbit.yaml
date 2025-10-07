@@ -96,6 +96,19 @@ reviews:
         - Validate error handling in example code
         - Check documentation clarity and completeness
 
+    # Backup and snapshot tools
+    - path: "tools/backup/**/*.py"
+      instructions: |
+        - Verify arangodump/arangorestore command construction and error handling
+        - Check snapshot metadata integrity and versioning
+        - Validate retention policy logic (last 10, weekly for 3 months, permanent protection)
+        - Ensure proper cleanup and rollback on failures
+        - Review compression/decompression safety
+        - Validate path handling and directory permissions
+        - Check TCP endpoint usage is documented (issue #5 workaround)
+        - Ensure environment variable handling (ARANGO_PASSWORD)
+        - Validate CLI argument parsing and user confirmations
+
   # Tool integration
   tools:
     shellcheck:
@@ -129,19 +142,21 @@ exclude:
   - "**/go.sum"  # Go dependency checksums
   - "**/*.sock"  # Unix socket files
 
-# Known issues/patterns to watch for
+# Knowledge base for CodeRabbit AI learning
 knowledge_base:
   learnings:
-    - "ArangoDB operations must enforce strict SLOs (p50≤0.4ms upstream, ~0.2ms proxy overhead)"
-    - "Unix socket proxies: RO (0660) allows queries only, RW (0660 dev/0600 prod) allows DB-scoped mutations"
-    - "Proxy security: RO blocks AQL DML keywords (INSERT, UPDATE, REPLACE, REMOVE, UPSERT) using word-boundary regex, RW blocks admin endpoints"
-    - "RO proxy: DELETE allowed for cursor cleanup, PUT to cursor deprecated (use POST)"
-    - "HTTP/2 client: Use persistent connections, handle timeouts properly, cleanup cursors"
-    - "Jina v4: 32k context, 2048 dimensions, late chunking support, batch processing required"
-    - "Socket permissions critical: RO 0660 group access, RW 0660 dev/0600 prod owner-only"
-    - "Admin operations: Must use admin socket or RW socket, idempotent design required"
-    - "Extractor factory: Detect file type by extension, use robust fallback on errors"
-    - "Embedder configuration: Validate device (cuda/cpu), batch size, chunk parameters"
-    - "Go proxy timeouts: Default 120s client, 10s dial, configurable via env vars"
-    - "Import operations: Use on_duplicate='ignore' for idempotent ingestion"
-    - "TreeSitter parsing: Handle grammar loading errors, validate language support"
+    scope: auto  # CodeRabbit learns patterns automatically from reviews
+
+# Project-specific conventions and critical patterns
+# These are documented in path_instructions above for CodeRabbit reviews:
+# - ArangoDB operations must enforce strict SLOs (p50≤0.4ms upstream, ~0.2ms proxy overhead)
+# - Unix socket proxies: RO (0660) queries only, RW (0660 dev/0600 prod) DB-scoped mutations
+# - Proxy security: RO blocks AQL DML keywords, RW blocks admin endpoints
+# - HTTP/2 client: persistent connections, proper timeout handling, cursor cleanup
+# - Jina v4: 32k context, 2048 dimensions, late chunking, batch processing
+# - Socket permissions: RO 0660 group, RW 0660 dev/0600 prod owner-only
+# - Backup strategy: Two-tier (DR=ZFS snapshots nightly, operational=arangodump on-demand)
+# - Operational snapshots: TCP endpoint (http://127.0.0.1:8529) due to Go proxy limitation (issue #5)
+# - Backup defaults: include_bulk=False (bulk storage is already the archive)
+# - Snapshot retention: Last 10, weekly for 3 months, permanent snapshots never deleted
+# - Import operations: Use on_duplicate='ignore' for idempotent ingestion
