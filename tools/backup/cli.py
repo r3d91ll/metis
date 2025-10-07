@@ -25,7 +25,7 @@ def create_snapshot_cmd(args: argparse.Namespace) -> int:
         snapshot_name = manager.create_snapshot(
             description=args.description,
             permanent=args.permanent,
-            include_bulk=not args.no_bulk,
+            include_bulk=args.include_bulk,
         )
 
         print(f"✓ Snapshot created: {snapshot_name}")
@@ -241,9 +241,9 @@ def main(argv: Optional[list] = None) -> int:
         help="Mark snapshot as permanent (never auto-deleted)",
     )
     create_parser.add_argument(
-        "--no-bulk",
+        "--include-bulk",
         action="store_true",
-        help="Skip bulk storage backup (database only)",
+        help="Include bulk storage backup (rarely needed - bulk storage is already the archive)",
     )
     create_parser.set_defaults(func=create_snapshot_cmd)
 

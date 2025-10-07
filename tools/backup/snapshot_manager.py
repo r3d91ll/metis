@@ -59,9 +59,9 @@ class SnapshotManager:
     def __init__(
         self,
         db_name: str = "arxiv_datastore",
-        db_socket: str = "/run/metis/readwrite/arangod.sock",
+        db_endpoint: str = "http://127.0.0.1:8529",
         db_username: str = "root",
-        db_password: str = "",
+        db_password: str | None = None,
         snapshot_root: Path = Path("/bulk-store/metis/snapshots"),
         bulk_store_root: Path = Path("/bulk-store/metis"),
     ):
@@ -70,16 +70,23 @@ class SnapshotManager:
 
         Args:
             db_name: ArangoDB database name
-            db_socket: Unix socket path for ArangoDB
+            db_endpoint: ArangoDB endpoint (uses TCP for backups)
             db_username: Database username
-            db_password: Database password
+            db_password: Database password (defaults to ARANGO_PASSWORD env var)
             snapshot_root: Directory for storing snapshots
             bulk_store_root: Root directory of bulk storage to backup
+
+        Note:
+            Uses TCP connection (http://127.0.0.1:8529) instead of Unix socket for backups
+            because arangodump is not yet supported by the Go security proxies (issue #5).
+            This is acceptable for backups since they're not time-sensitive operations.
         """
+        import os
+
         self.db_name = db_name
-        self.db_socket = db_socket
+        self.db_endpoint = db_endpoint  # TCP for backups only
         self.db_username = db_username
-        self.db_password = db_password
+        self.db_password = db_password or os.getenv("ARANGO_PASSWORD", "")
         self.snapshot_root = Path(snapshot_root)
         self.bulk_store_root = Path(bulk_store_root)
 
@@ -92,15 +99,18 @@ class SnapshotManager:
         self,
         description: str,
         permanent: bool = False,
-        include_bulk: bool = True,
+        include_bulk: bool = False,  # Default False - bulk storage is already the archive
     ) -> str:
         """
-        Create new snapshot of database and bulk storage.
+        Create new snapshot of database.
+
+        Note: Bulk storage (/bulk-store/metis/experiments) is already the archive
+        and doesn't need to be backed up. Use include_bulk=True only for special cases.
 
         Args:
             description: Human-readable description
             permanent: If True, won't be auto-deleted by retention policy
-            include_bulk: If True, backup bulk storage files
+            include_bulk: If True, backup bulk storage files (rarely needed)
 
         Returns:
             Snapshot name (identifier for restoration)
@@ -433,7 +443,7 @@ class SnapshotManager:
             "--server.database",
             self.db_name,
             "--server.endpoint",
-            f"unix://{self.db_socket}",
+            self.db_endpoint,
             "--server.username",
             self.db_username,
             "--output-directory",
@@ -449,7 +459,10 @@ class SnapshotManager:
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise SnapshotError(f"Database backup failed: {result.stderr}")
+            logger.error(f"arangodump failed with exit code {result.returncode}")
+            logger.error(f"stdout: {result.stdout}")
+            logger.error(f"stderr: {result.stderr}")
+            raise SnapshotError(f"Database backup failed: {result.stderr}\nstdout: {result.stdout}")
 
         # Parse collection counts from output
         collections = {}
@@ -474,7 +487,7 @@ class SnapshotManager:
             "--server.database",
             self.db_name,
             "--server.endpoint",
-            f"unix://{self.db_socket}",
+            self.db_endpoint,
             "--server.username",
             self.db_username,
             "--input-directory",
