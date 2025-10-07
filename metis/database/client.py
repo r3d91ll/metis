@@ -44,7 +44,7 @@ class ArangoHttp2Config:
     """Configuration for the HTTP/2 client."""
 
     database: str = "_system"
-    socket_path: str = "/tmp/arangodb.sock"
+    socket_path: str | None = "/tmp/arangodb.sock"  # None = use TCP
     base_url: str = "http://localhost"
     username: str | None = None
     password: str | None = None
@@ -58,11 +58,33 @@ class ArangoHttp2Client:
     """Minimal HTTP/2 ArangoDB client speaking over Unix sockets."""
 
     def __init__(self, config: ArangoHttp2Config) -> None:
+        """
+        Initialize the HTTP client for ArangoDB according to the provided configuration.
+        
+        Builds an httpx.Client configured from `config`: uses a Unix domain socket when `config.socket_path` is set (and disables HTTP/2 in that case), falls back to TCP otherwise (with HTTP/2 enabled), applies connect/read/write/pool timeouts, optional basic auth from `config.username`/`config.password`, and any pool limits from `config.pool_limits`.
+        
+        Parameters:
+            config (ArangoHttp2Config): Client configuration including database, socket_path (None to use TCP), base_url, credentials, timeouts, and pool limits.
+        """
         self._config = config
-        transport = httpx.HTTPTransport(
-            uds=config.socket_path,
-            retries=0,
-        )
+
+        # Support both Unix socket and TCP
+        # When using Unix socket, disable HTTP/2 in client since the Go proxy
+        # already handles HTTP/2 to ArangoDB. This avoids chunked encoding issues.
+        use_http2 = not bool(config.socket_path)
+
+        if config.socket_path:
+            # Unix socket (preferred for performance)
+            transport = httpx.HTTPTransport(
+                uds=config.socket_path,
+                retries=0,
+            )
+        else:
+            # TCP fallback (when socket unavailable)
+            transport = httpx.HTTPTransport(
+                retries=0,
+            )
+
         timeout = httpx.Timeout(
             connect=config.connect_timeout,
             read=config.read_timeout,
@@ -74,7 +96,7 @@ class ArangoHttp2Client:
             auth = (config.username, config.password)
 
         self._client = httpx.Client(
-            http2=True,
+            http2=use_http2,
             base_url=config.base_url,
             transport=transport,
             timeout=timeout,

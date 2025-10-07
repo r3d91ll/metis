@@ -1,0 +1,91 @@
+# arXiv Import Pipeline Configuration
+
+database:
+  name: "arxiv_datastore"
+  # Prefer Metis UDS proxies for maximum throughput; TCP only if explicitly enabled.
+  socket_path: "/run/metis/readwrite/arangod.sock"  # Optional explicit RW socket for admin ops
+  use_tcp: false
+
+  # Collections
+  collections:
+    papers: "arxiv_papers"              # Metadata only (lightweight)
+    abstracts: "arxiv_abstracts"        # Full text content (title, abstract)
+    embeddings: "arxiv_embeddings"      # Embedding vectors only (2048-dim x 3)
+    citations: "citations"              # Edge: paper citation relationships
+    category_links: "category_links"    # Edge: papers sharing categories
+    author_links: "author_links"        # Edge: co-authorship
+    temporal_succession: "temporal_succession"  # Edge: temporally adjacent papers
+
+  # Per-collection NDJSON import chunk sizes. Keep embeddings conservative due to payload size.
+  chunk_sizes:
+    papers: 4000
+    abstracts: 4000
+    embeddings: 750
+
+data:
+  source_file: "./data/arxiv-kaggle-latest.json"
+
+embeddings:
+  model: "jinaai/jina-embeddings-v4"
+  device: "cuda"  # Workers set CUDA_VISIBLE_DEVICES per process
+  dimension: 2048
+  batch_size: 48        # A6000 (48GB): higher micro-batch for better throughput
+  max_length: 8192       # Sane truncation; abstracts rarely exceed 1–2k tokens
+  use_fp16: true         # FP16 on Ampere for speed and memory
+  normalize_embeddings: true
+  combined_only: true    # Compute only combined(title+abstract) to 3x throughput
+
+  # Late Chunking (from HADES config)
+  chunk_size_tokens: 500  # Most arXiv abstracts fit in 500 tokens (99% without chunking)
+  chunk_overlap_tokens: 200  # 40% overlap for context preservation across chunk boundaries
+
+import:
+  batch_size: 512            # Documents per worker batch (raise to feed GPUs)
+  embedding_batch_size: 48  # Mirror embeddings.batch_size (informational)
+  log_interval: 1000
+
+edges:
+  category_links:
+    enabled: true
+    min_shared_categories: 2  # Papers must share ≥2 categories to be linked
+
+  temporal_succession:
+    enabled: true
+    min_months: 1              # Minimum time gap between papers
+    max_months: 3              # Maximum time gap (1-3 months window)
+    max_edges_per_paper: 50    # Cap outgoing edges per paper
+    decay_alpha: 0.3           # Exponential decay: weight = exp(-alpha * months)
+
+# Graph export configuration
+graph:
+  output_path: "models/arxiv_graph.pt"
+  node_collection: "arxiv_embeddings"
+  edge_collections:
+    - "category_links"
+    - "temporal_succession"
+  val_ratio: 0.2  # Validation set size
+
+# GNN training configuration
+gnn:
+  architecture:
+    in_channels: 2048       # Jina v4 embedding dimension
+    hidden_channels: 1024   # Hidden layer size
+    out_channels: 512       # Output embedding dimension (compressed for retrieval)
+    num_layers: 3           # Number of GraphSAGE layers
+    dropout: 0.3            # Dropout rate
+
+  training:
+    epochs: 100             # Maximum training epochs
+    batch_size: 512         # Training batch size
+    learning_rate: 0.001    # Adam learning rate
+    weight_decay: 0.00001   # L2 regularization
+    temperature: 0.07       # InfoNCE temperature parameter
+    patience: 15            # Early stopping patience
+
+  sampling:
+    use_neighbor_sampling: true
+    num_neighbors: [10, 10, 10]  # Neighbors to sample per layer
+
+  checkpoints:
+    dir: "models/arxiv_checkpoints"
+    save_best_only: true

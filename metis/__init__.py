@@ -10,6 +10,7 @@ Main Components:
 - embedders: Text embedding with Jina v4 and other models
 - extractors: Document extraction (PDF, LaTeX, code)
 - database: ArangoDB client with Unix socket support
+- gnn: GraphSAGE models for graph neural networks
 - config: Configuration management
 
 Example:
@@ -51,12 +52,19 @@ from .database import (
     ArangoHttp2Client,
     ArangoHttp2Config,
     ArangoHttpError,
-    ArangoMemoryClient,
-    ArangoMemoryClientConfig,
+    ArangoClient,
+    ArangoClientConfig,
+    ArangoClientError,
     CollectionDefinition,
-    MemoryServiceError,
-    resolve_memory_config,
+    resolve_client_config,
 )
+
+# GNN components (optional - requires torch-geometric)
+try:
+    from .gnn import GraphSAGEInference, MultiRelationalGraphSAGE
+except ImportError:
+    GraphSAGEInference = None  # type: ignore[misc]
+    MultiRelationalGraphSAGE = None  # type: ignore[misc]
 
 __all__ = [
     # Version
@@ -81,9 +89,12 @@ __all__ = [
     "ArangoHttp2Client",
     "ArangoHttp2Config",
     "ArangoHttpError",
-    "ArangoMemoryClient",
-    "ArangoMemoryClientConfig",
+    "ArangoClient",
+    "ArangoClientConfig",
+    "ArangoClientError",
     "CollectionDefinition",
-    "MemoryServiceError",
-    "resolve_memory_config",
+    "resolve_client_config",
+    # GNN
+    "MultiRelationalGraphSAGE",
+    "GraphSAGEInference",
 ]

@@ -89,29 +89,44 @@ class EmbedderFactory:
     @classmethod
     def _determine_embedder_type(cls, model_name: str) -> str:
         """
-        Determine embedder type from model name.
-
-        Args:
-            model_name: Model name or path
-
+        Infer which embedder implementation to use based on the provided model name.
+        
+        Parameters:
+            model_name (str): Model name or path; if the lowercased value contains the substring "transformers", the transformers-backed embedder is selected.
+        
         Returns:
-            Embedder type string
+            str: The embedder type identifier: "jina-transformers" when model_name indicates a transformers backend, otherwise "jina".
         """
-        # Metis uses SentenceTransformers-backed Jina embedder as default.
+        # Prefer transformers-backed Jina embedder when requested via model name hint.
+        # Accept markers like "-transformers" to select the direct HF transformers backend.
+        try:
+            name = (model_name or "").lower()
+        except Exception:
+            name = ""
+
+        if "transformers" in name:
+            return "jina-transformers"
+
+        # Default: SentenceTransformers-backed Jina embedder.
         return "jina"
 
     @classmethod
     def _auto_register(cls, embedder_type: str):
         """
-        Attempt to auto-register an embedder type.
-
-        Args:
-            embedder_type: Type of embedder to register
+        Dynamically import and register the embedder class for the given embedder type.
+        
+        If the type is recognized (for example, "jina" or "jina-transformers"), imports the corresponding module and registers its embedder class in the factory registry. If the type is unrecognized, a warning is logged. If the import fails, an error is logged.
+        
+        Parameters:
+            embedder_type (str): The name of the embedder type to auto-register (e.g., "jina", "jina-transformers").
         """
         try:
             if embedder_type == "jina":
                 from .jina_v4 import JinaV4Embedder
                 cls.register("jina", JinaV4Embedder)
+            elif embedder_type == "jina-transformers":
+                from .jina_v4_transformers import JinaV4TransformersEmbedder
+                cls.register("jina-transformers", JinaV4TransformersEmbedder)
             else:
                 logger.warning(f"Unknown embedder type: {embedder_type}")
         except ImportError as e:
